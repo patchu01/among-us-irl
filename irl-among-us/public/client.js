@@ -158,12 +158,20 @@ function renderActionPanel() {
         document.getElementById('doctorUI').classList.remove('hidden');
         const select = document.getElementById('docTargetSelect');
         select.innerHTML = '<option value="">-- Choose Patient --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
+        gamePlayers.forEach(p => { 
+            if(p.id !== socket.id && p.status === 'alive') {
+                select.innerHTML += `<option value="${p.id}">${p.username}</option>`; 
+            }
+        });
     } else if (myRole === 'jailor') {
         document.getElementById('jailorUI').classList.remove('hidden');
         const select = document.getElementById('jailorTargetSelect');
         select.innerHTML = '<option value="">-- Choose Suspect --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
+        gamePlayers.forEach(p => { 
+            if(p.id !== socket.id && p.status === 'alive') {
+                select.innerHTML += `<option value="${p.id}">${p.username}</option>`; 
+            }
+        });
     }
 
     gamePlayers.forEach(p => {
@@ -507,12 +515,20 @@ function renderActionPanel() {
         document.getElementById('doctorUI').classList.remove('hidden');
         const select = document.getElementById('docTargetSelect');
         select.innerHTML = '<option value="">-- Choose Patient --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
+        gamePlayers.forEach(p => { 
+            if(p.id !== socket.id && p.status === 'alive') {
+                select.innerHTML += `<option value="${p.id}">${p.username}</option>`; 
+            }
+        });
     } else if (myRole === 'jailor') {
         document.getElementById('jailorUI').classList.remove('hidden');
         const select = document.getElementById('jailorTargetSelect');
         select.innerHTML = '<option value="">-- Choose Suspect --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
+        gamePlayers.forEach(p => { 
+            if(p.id !== socket.id && p.status === 'alive') {
+                select.innerHTML += `<option value="${p.id}">${p.username}</option>`; 
+            }
+        });
     }
 
     gamePlayers.forEach(p => {
