@@ -1,13 +1,17 @@
 {
   "name": "irl-among-us-mobile",
   "version": "1.0.0",
-  "description": "Among Us in Real Life Mobile Server",
+  "description": "IRL amongus",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5"
-  }
+    "express": "^4.22.2",
+    "socket.io": "^4.8.3"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
 }

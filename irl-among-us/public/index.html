@@ -1,143 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>IRL Among Us</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #121212;
-            color: #e0e0e0;
-            text-align: center;
-            margin: 0;
-            padding: 15px;
-            user-select: none;
-            -webkit-user-select: none;
-            box-sizing: border-box;
-        }
+        body { background: #121212; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
+        .btn { display: block; width: 100%; padding: 15px; margin: 10px 0; background: #ff3b30; border: none; border-radius: 10px; color: white; font-weight: bold; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border-radius: 8px; border: none; }
         .hidden { display: none !important; }
-        .screen { max-width: 500px; margin: 0 auto; padding-bottom: 40px; }
-        h1 { color: #ff3b30; margin-top: 10px; font-size: 2rem; text-transform: uppercase; letter-spacing: 2px; }
-        
-        input[type="text"], input[type="number"] {
-            width: 100%;
-            padding: 14px;
-            margin: 10px 0;
-            border-radius: 10px;
-            border: 2px solid #333;
-            font-size: 16px;
-            background: #1e1e1e;
-            color: white;
-            box-sizing: border-box;
-        }
-        input:focus { border-color: #ff3b30; outline: none; }
-        
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 16px;
-            margin: 12px 0;
-            cursor: pointer;
-            background: #ff3b30;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: bold;
-            text-transform: uppercase;
-            touch-action: manipulation;
-            box-sizing: border-box;
-        }
-        .btn:active { background: #c32219; }
-        .btn-alt { background: #3a3a3c; }
-        .btn-alt:active { background: #2c2c2e; }
-        .btn-kill { background: #ff453a; }
-        .btn-disabled { background: #2c2c2e !important; color: #8e8e93; cursor: not-allowed; }
-
-        .player-card {
-            border: 1px solid #2c2c2e;
-            padding: 14px;
-            margin: 10px 0;
-            border-radius: 12px;
-            background: #1c1c1e;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            text-align: left;
-        }
-        .player-info { font-size: 16px; font-weight: 600; }
-        .player-actions button {
-            padding: 8px 14px;
-            border-radius: 6px;
-            border: none;
-            font-weight: bold;
-            color: white;
-        }
-
-        .settings-panel {
-            background: #1c1c1e;
-            padding: 15px;
-            border-radius: 12px;
-            margin: 15px 0;
-            text-align: left;
-        }
-        .settings-row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; }
-        .settings-row input { width: 70px; margin: 0; padding: 6px; }
-
-        #systemMessages { color: #ffd60a; font-weight: bold; margin: 15px 0; min-height: 20px; font-size: 15px; }
-        #timers { font-size: 24px; font-weight: bold; color: #ff9f0a; margin: 10px 0; }
-        .role-display { font-size: 24px; font-weight: bold; letter-spacing: 1px; margin: 10px 0; }
     </style>
 </head>
 <body>
-
-    <div id="lobbyScreen" class="screen">
-        <h1>IRL Game Setup</h1>
-        <div id="joinForm">
-            <input type="text" id="username" placeholder="Enter Username" autocomplete="off">
-            <input type="text" id="roomCode" placeholder="Enter Room Code (e.g. ROOM)" autocomplete="off">
-            <button class="btn" onclick="joinRoom()">Enter Lobby</button>
-        </div>
-        
-        <div id="lobbyUI" class="hidden">
-            <div id="hostSettings" class="settings-panel hidden">
-                <h3>Host Custom Rules</h3>
-                <div class="settings-row"><span>Imposters:</span><input type="number" id="setImps" value="1" min="1" onchange="sendSettings()"></div>
-                <div class="settings-row"><span>Doctors (Max 1):</span><input type="number" id="setDocs" value="1" min="0" max="1" onchange="sendSettings()"></div>
-                <div class="settings-row"><span>Sheriffs (Max 1):</span><input type="number" id="setSheriffs" value="1" min="0" max="1" onchange="sendSettings()"></div>
-                <div class="settings-row"><span>Jailors (Max 1):</span><input type="number" id="setJailors" value="1" min="0" max="1" onchange="sendSettings()"></div>
-            </div>
-            <h3>Manifest Panel</h3>
-            <div id="playerList"></div>
-            <button class="btn hidden" id="startBtn" onclick="startGame()">Commence Scenario</button>
-        </div>
+    <div id="lobbyScreen">
+        <h1>Among Us IRL</h1>
+        <input type="text" id="username" placeholder="Username">
+        <button class="btn" onclick="createRoom()">Create Room</button>
+        <input type="number" id="roomCode" placeholder="6-Digit Code">
+        <button class="btn" onclick="joinRoom()">Join Room</button>
     </div>
-
-    <div id="gameScreen" class="screen hidden">
-        <div class="role-display">Role: <span id="myRole"></span></div>
-        <div id="timers"></div>
-        <div id="systemMessages"></div>
-        
-        <button class="btn" onclick="reportBody()">🚨 Report Body</button>
-        <button class="btn btn-alt" id="emergencyBtn" onclick="callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
-        <button class="btn hidden" id="hostMeetingBtn" onclick="startMeeting()">Host: Open Discussion Phase</button>
-        
-        <h3>Local Area Status</h3>
-        <div id="playersActionList"></div>
+    <div id="gameScreen" class="hidden">
+        <h2 id="roleDisplay"></h2>
+        <div id="actionPanel"></div>
     </div>
-
-    <div id="meetingScreen" class="screen hidden">
-        <h2 id="meetingStatus">Assembly Triggered</h2>
-        <div id="meetingTimer" style="font-size: 28px; font-weight: bold; color: #ff9f0a; margin: 15px 0;"></div>
-        
-        <div id="votingUI" class="hidden">
-            <h3>Cast Registry Vote:</h3>
-            <div id="voteList"></div>
-            <button class="btn btn-alt" onclick="submitVote('skip')">Skip Registration</button>
-        </div>
-    </div>
-
     <script src="/socket.io/socket.io.js"></script>
     <script src="client.js"></script>
 </body>
