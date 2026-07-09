@@ -6,6 +6,7 @@ let cooldownTimer = null;
 let meetingTimerInterval = null;
 let canAct = true;
 let amIHost = false;
+console.log('s ')
 
 // Handle or fetch persistent Device-UUID parameters to survive browser refreshes
 if (!sessionStorage.getItem('irl_user_uuid')) {
