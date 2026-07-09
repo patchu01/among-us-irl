@@ -68,8 +68,8 @@
             <button class="btn btn-kill" style="padding:10px; margin:5px 0;" onclick="adminScenario('imp_win')">Simulate Imposter Win</button>
         </div>
 
-        <button class="btn" onclick="reportBody()">🚨 Report Body</button>
-        <button class="btn btn-alt" onclick="callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
+        <button class="btn" id="reportBtn" onclick="reportBody()">🚨 Report Body</button>
+        <button class="btn btn-alt" id="emergencyBtn" onclick="callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
         <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="startMeeting()">Host: Trigger Discussion Phase</button>
 
         <div id="doctorUI" class="panel-box hidden">
@@ -93,14 +93,14 @@
         <div id="meetingTimer" style="font-size: 28px; font-weight: bold; color: #ff9f0a; margin: 15px 0;"></div>
         
         <div id="jailorExecuteUI" class="panel-box hidden">
-            <h3 style="color:#ff453a;">Jailor Martial Execution Executioner</h3>
+            <h3 style="color:#ff453a;">Jailor Martial Execution Terminal</h3>
             <button class="btn btn-kill" id="jailExecuteBtn" onclick="executeJailedSuspect()">Terminate Current Prisoner</button>
         </div>
 
         <div id="votingUI" class="hidden">
             <h3>Cast Registry Vote:</h3>
             <div id="voteList"></div>
-            <button class="btn btn-alt" onclick="submitVote('skip')">Skip Registration</button>
+            <button class="btn btn-alt" id="skipVoteBtn" onclick="submitVote('skip')">Skip Registration</button>
         </div>
     </div>
 

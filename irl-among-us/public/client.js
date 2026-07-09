@@ -3,8 +3,27 @@ let currentRoom = '';
 let myRole = '';
 let gamePlayers = [];
 let cooldownTimer = null;
+let meetingTimerInterval = null;
 let canAct = true;
 let amIHost = false;
+
+// Initialize or pull persistent Device-UUID parameters to handle browser refreshes
+if (!sessionStorage.getItem('irl_user_uuid')) {
+    sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
+}
+const myUUID = sessionStorage.getItem('irl_user_uuid');
+
+// Handle automatic recovery if page properties exist in storage
+window.addEventListener('load', () => {
+    const savedRoom = sessionStorage.getItem('irl_room_code');
+    const savedUser = sessionStorage.getItem('irl_username');
+    if (savedRoom && savedUser) {
+        document.getElementById('createUsername').value = savedUser;
+        document.getElementById('joinUsername').value = savedUser;
+        document.getElementById('joinRoomCode').value = savedRoom;
+        socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
+    }
+});
 
 function switchTab(tabName) {
     document.getElementById('createTab').classList.add('hidden');
@@ -23,14 +42,18 @@ function switchTab(tabName) {
 function createRoom() {
     const username = document.getElementById('createUsername').value.trim();
     if (!username) return alert("Enter a username.");
-    socket.emit('createRoom', { username });
+    sessionStorage.setItem('irl_username', username);
+    socket.emit('createRoom', { username, uuid: myUUID });
 }
 
 function joinRoom() {
     const username = document.getElementById('joinUsername').value.trim();
     currentRoom = document.getElementById('joinRoomCode').value.trim();
     if (!username || currentRoom.length !== 6) return alert("Invalid credentials.");
-    socket.emit('joinLobby', { username, room: currentRoom });
+    
+    sessionStorage.setItem('irl_username', username);
+    sessionStorage.setItem('irl_room_code', currentRoom);
+    socket.emit('joinLobby', { username, room: currentRoom, uuid: myUUID });
 }
 
 function startGame() { socket.emit('startGame', currentRoom); }
@@ -38,11 +61,22 @@ function reportBody() { socket.emit('reportBody', currentRoom); }
 function callMeeting() { socket.emit('callMeeting', currentRoom); }
 function startMeeting() { socket.emit('startMeeting', currentRoom); document.getElementById('hostMeetingBtn').classList.add('hidden'); }
 
-socket.on('joinError', (err) => alert(err));
+socket.on('joinError', (err) => {
+    sessionStorage.clear();
+    alert(err);
+});
+
+socket.on('roomCreated', (data) => {
+    currentRoom = data.room;
+    sessionStorage.setItem('irl_room_code', currentRoom);
+});
 
 socket.on('updateLobby', (data) => {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('lobbyScreen').classList.remove('hidden');
+    document.getElementById('gameScreen').classList.add('hidden');
+    document.getElementById('meetingScreen').classList.add('hidden');
+    
     currentRoom = data.roomCode;
     document.getElementById('lobbyRoomCodeDisplay').innerText = data.roomCode;
     
@@ -63,14 +97,15 @@ socket.on('gameStarted', (data) => {
     myRole = data.role;
     gamePlayers = data.players;
     document.getElementById('lobbyScreen').classList.add('hidden');
+    document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
+    document.getElementById('meetingScreen').classList.add('hidden');
     
     const roleEl = document.getElementById('roleDisplay');
     roleEl.innerText = "Role: " + myRole.toUpperCase();
     roleEl.style.color = (myRole === 'imposter') ? '#ff453a' : '#30d158';
     
-    // Check for admin user trigger dynamically
-    const currentUsername = document.getElementById('createUsername').value.trim() || document.getElementById('joinUsername').value.trim();
+    const currentUsername = sessionStorage.getItem('irl_username');
     if (currentUsername === 'admin141211') {
         document.getElementById('adminPanel').classList.remove('hidden');
     }
@@ -113,13 +148,12 @@ function renderActionPanel() {
     document.getElementById('meetCount').innerText = me.meetingsLeft;
 
     if (me.status === 'dead') {
-        panel.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (DECEASED MANIFEST)</div>';
+        panel.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (GHOST MODE)</div>';
         document.getElementById('doctorUI').classList.add('hidden');
         document.getElementById('jailorUI').classList.add('hidden');
         return;
     }
 
-    // Populate Select Dropdowns for Menu Interfaces
     if (myRole === 'doctor') {
         document.getElementById('doctorUI').classList.remove('hidden');
         const select = document.getElementById('docTargetSelect');
@@ -132,7 +166,6 @@ function renderActionPanel() {
         gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
     }
 
-    // Main Status Manifest Table Screen Rendering
     gamePlayers.forEach(p => {
         let card = document.createElement('div');
         card.className = 'player-card';
@@ -159,7 +192,6 @@ function renderActionPanel() {
     });
 }
 
-// Select Dropdown Executions
 function executeDoctorShield() {
     const val = document.getElementById('docTargetSelect').value;
     if(val) socket.emit('actionShield', { room: currentRoom, targetId: val });
@@ -179,7 +211,6 @@ function executeJailedSuspect() {
     if(val) socket.emit('actionExecute', { room: currentRoom, targetId: val });
 }
 
-// Admin Panel Triggers
 function adminRoleOverride() {
     const role = document.getElementById('adminRoleSelect').value;
     socket.emit('adminChangeRole', { room: currentRoom, role });
@@ -200,13 +231,19 @@ socket.on('systemMessage', (msg) => {
 
 socket.on('meetingCalled', (data) => {
     clearInterval(cooldownTimer);
+    clearInterval(meetingTimerInterval);
     document.getElementById('gameScreen').classList.add('hidden');
     document.getElementById('meetingScreen').classList.remove('hidden');
-    document.getElementById('votingUI').classList.add('hidden');
-    document.getElementById('jailorExecuteUI').classList.add('hidden');
     
-    const callerName = gamePlayers.find(p => p.id === data.caller)?.username || "Unknown System Switch";
-    document.getElementById('meetingStatus').innerText = `${data.type} initiated by ${callerName}. Assemble in person!`;
+    // Open voting UI immediately to allow voting during the discussion phase
+    document.getElementById('votingUI').classList.remove('hidden');
+    document.getElementById('jailorExecuteUI').classList.add('hidden');
+    renderVotingPanel();
+    
+    if (data && data.type) {
+        const callerName = gamePlayers.find(p => p.id === data.caller)?.username || "The Room Creator";
+        document.getElementById('meetingStatus').innerText = `${data.type} called by ${callerName}. Gather and deliberate!`;
+    }
     
     if (amIHost) document.getElementById('hostMeetingBtn').classList.remove('hidden');
 });
@@ -219,45 +256,65 @@ socket.on('meetingStarted', (data) => {
         document.getElementById('jailorExecuteUI').classList.remove('hidden');
     }
 
-    if (data.phase === 'voting') {
-        document.getElementById('jailorExecuteUI').classList.add('hidden');
-        if (socket.id !== data.jailedId) {
-            document.getElementById('votingUI').classList.remove('hidden');
-            renderVotingPanel();
-        } else {
-            document.getElementById('meetingStatus').innerText = "PHASE: VOTING (YOU ARE JAILED - VOTING RIGHTS REVOKED)";
-        }
+    if (socket.id === data.jailedId) {
+        document.getElementById('votingUI').className = 'hidden';
+        document.getElementById('meetingStatus').innerText = `PHASE: ${data.phase.toUpperCase()} (YOU ARE JAILED - ABILITIES BLOCKED)`;
     }
     
-    clearInterval(cooldownTimer);
-    cooldownTimer = setInterval(() => {
+    clearInterval(meetingTimerInterval);
+    document.getElementById('meetingTimer').innerText = `Time Remaining: ${left}s`;
+    
+    meetingTimerInterval = setInterval(() => {
         left--;
         document.getElementById('meetingTimer').innerText = `Time Remaining: ${left}s`;
-        if(left <= 0) clearInterval(cooldownTimer);
+        if(left <= 0) clearInterval(meetingTimerInterval);
     }, 1000);
 });
 
 function renderVotingPanel() {
     const container = document.getElementById('voteList');
     container.innerHTML = '';
+    
+    const me = gamePlayers.find(p => p.id === socket.id);
+    if (me && me.status === 'dead') {
+        container.innerHTML = '<h4 style="color:#ff453a;">Ghosts cannot vote.</h4>';
+        document.getElementById('skipVoteBtn').className = 'hidden';
+        return;
+    }
+    
+    document.getElementById('skipVoteBtn').className = 'btn btn-alt';
+
     gamePlayers.forEach(p => {
         if (p.status === 'alive') {
             let btn = document.createElement('button');
             btn.className = 'btn btn-alt';
+            btn.id = `vote-btn-${p.id}`;
             btn.innerText = p.username;
-            btn.onclick = () => {
-                socket.emit('submitVote', { room: currentRoom, targetId: p.id });
-                document.getElementById('votingUI').innerHTML = '<h4>Vote Logged. Waiting for synchronization...</h4>';
-            };
+            btn.onclick = () => submitVote(p.id);
             container.appendChild(btn);
         }
     });
 }
 
-socket.on('playerEjected', (result) => alert(`Result: ${result} was ejected.`));
+function submitVote(targetId) {
+    socket.emit('submitVote', { room: currentRoom, targetId });
+    document.getElementById('votingUI').innerHTML = '<h4>Vote Logged. Waiting for other crew responses...</h4>';
+}
+
+socket.on('voteCastFeedback', (data) => {
+    const targetBtn = document.getElementById(`vote-btn-${data.voterId}`);
+    if (targetBtn) {
+        targetBtn.innerText += " (Voted ✓)";
+        targetBtn.style.background = "#30d158";
+        targetBtn.disabled = true;
+    }
+});
+
+socket.on('playerEjected', (result) => alert(`Assembly Verdict: ${result} was exiled.`));
 
 socket.on('meetingEnded', (players) => {
     gamePlayers = players;
+    clearInterval(meetingTimerInterval);
     document.getElementById('meetingScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
     document.getElementById('votingUI').classList.add('hidden');
@@ -266,6 +323,7 @@ socket.on('meetingEnded', (players) => {
 });
 
 socket.on('gameOver', (data) => {
-    alert(`Game Concluded! Winners: ${data.winner}`);
+    sessionStorage.removeItem('irl_room_code'); // Clean up active runtime state flags
+    alert(`Scenario Complete! Winners: ${data.winner}`);
     window.location.reload();
 });

@@ -10,6 +10,8 @@ const io = new Server(server, { transports: ['websocket', 'polling'] });
 app.use(express.static(path.join(__dirname, 'public')));
 
 const games = {};
+let discussionTimeout = null;
+let votingTimeout = null;
 
 function generateRoomCode() { 
     return Math.floor(100000 + Math.random() * 900000).toString(); 
@@ -39,12 +41,27 @@ function resetGame(game, room) {
     game.jailedPlayerId = null;
     game.jailorCanJail = true;
     game.jailorKillsLeft = 2;
+    game.votes = {};
     game.players.forEach(p => {
         p.role = 'crewmate';
         p.status = 'alive';
         p.meetingsLeft = 1;
     });
     io.to(room).emit('updateLobby', { players: game.players, hostId: game.host, roomCode: room });
+}
+
+function checkAllVoted(room) {
+    const game = games[room];
+    if (!game || game.state !== 'meeting_voting') return;
+
+    // Active voters are players who are ALIVE and NOT JAILED
+    const activeVoters = game.players.filter(p => p.status === 'alive' && p.id !== game.jailedPlayerId);
+    const totalVotesCast = Object.keys(game.votes).length;
+
+    if (totalVotesCast >= activeVoters.length) {
+        clearTimeout(votingTimeout);
+        tallyVotes(room);
+    }
 }
 
 function tallyVotes(room) {
@@ -83,12 +100,50 @@ function tallyVotes(room) {
         io.to(room).emit('playerEjected', 'No one (Skipped/Tie)');
     }
     
+    game.votes = {}; // Clear votes for next assembly
     io.to(room).emit('meetingEnded', game.players);
     checkWinCondition(room);
 }
 
 io.on('connection', (socket) => {
-    socket.on('createRoom', ({ username }) => {
+    
+    // --- SESSION RESTORATION OR JOIN CHANNEL ---
+    socket.on('registerSession', ({ username, room, uuid }) => {
+        if (!room || !uuid) return;
+        
+        const game = games[room];
+        if (game) {
+            // Check if player already exists under this UUID session
+            let player = game.players.find(p => p.uuid === uuid);
+            if (player) {
+                // Re-bind their running profile to the fresh socket ID
+                player.id = socket.id;
+                if (game.host === player.uuid || game.host === socket.id) {
+                    game.host = socket.id; 
+                }
+                socket.join(room);
+                
+                if (game.state === 'lobby') {
+                    socket.emit('roomCreated', { room });
+                    io.to(room).emit('updateLobby', { players: game.players, hostId: game.host, roomCode: room });
+                } else {
+                    // Drop them straight back into active play state
+                    socket.emit('roomCreated', { room });
+                    socket.emit('gameStarted', { role: player.role, players: game.players });
+                    io.to(room).emit('updateGame', game.players);
+                    
+                    if (game.state === 'meeting_discussion' || game.state === 'meeting_voting') {
+                        const currentPhase = game.state === 'meeting_discussion' ? 'discussion' : 'voting';
+                        socket.emit('meetingCalled', { caller: null, type: 'Reconnection Synchronization' });
+                        socket.emit('meetingStarted', { phase: currentPhase, duration: 15, jailedId: game.jailedPlayerId });
+                    }
+                }
+                return;
+            }
+        }
+    });
+
+    socket.on('createRoom', ({ username, uuid }) => {
         let room = generateRoomCode();
         while (games[room]) room = generateRoomCode();
         
@@ -105,20 +160,20 @@ io.on('connection', (socket) => {
             jailorKillsLeft: 2 
         };
         
-        games[room].players.push({ id: socket.id, username, role: 'crewmate', status: 'alive', meetingsLeft: 1 });
+        games[room].players.push({ id: socket.id, uuid, username, role: 'crewmate', status: 'alive', meetingsLeft: 1 });
         
         socket.join(room);
         socket.emit('roomCreated', { room });
         io.to(room).emit('updateLobby', { players: games[room].players, hostId: socket.id, roomCode: room });
     });
 
-    socket.on('joinLobby', ({ username, room }) => {
+    socket.on('joinLobby', ({ username, room, uuid }) => {
         if (!games[room]) return socket.emit('joinError', 'Invalid Room Code.');
         if (games[room].state !== 'lobby') return socket.emit('joinError', 'Game already started.');
         
         socket.join(room);
-        games[room].players = games[room].players.filter(p => p.id !== socket.id);
-        games[room].players.push({ id: socket.id, username, role: 'crewmate', status: 'alive', meetingsLeft: 1 });
+        games[room].players = games[room].players.filter(p => p.uuid !== uuid && p.id !== socket.id);
+        games[room].players.push({ id: socket.id, uuid, username, role: 'crewmate', status: 'alive', meetingsLeft: 1 });
         
         io.to(room).emit('updateLobby', { players: games[room].players, hostId: games[room].host, roomCode: room });
     });
@@ -148,19 +203,19 @@ io.on('connection', (socket) => {
         game.players.forEach(p => io.to(p.id).emit('gameStarted', { role: p.role, players: game.players }));
     });
 
-    // --- DOCTOR CORE ABILITY ---
+    // --- DOCTOR Core ---
     socket.on('actionShield', ({ room, targetId }) => {
         const game = games[room];
         if (!game) return;
         if (game.protectedHistory.includes(targetId)) {
-            return socket.emit('systemMessage', 'Target has been shielded before and cannot receive it again!');
+            return socket.emit('systemMessage', 'Target has been shielded before!');
         }
         game.shieldedPlayerId = targetId;
         const targetObj = game.players.find(p => p.id === targetId);
         socket.emit('systemMessage', `Shield deployed onto: ${targetObj ? targetObj.username : 'Unknown'}`);
     });
 
-    // --- EXECUTION LAW ENGINE ---
+    // --- DAMAGE CORE ENGINE ---
     socket.on('actionKill', ({ room, targetId, isSheriff }) => {
         const game = games[room];
         if (!game) return;
@@ -174,22 +229,18 @@ io.on('connection', (socket) => {
                 if (game.shieldedPlayerId === targetId) {
                     game.shieldedPlayerId = null;
                     game.protectedHistory.push(targetId);
-                    const doc = game.players.find(p => p.role === 'doctor');
-                    if(doc) io.to(doc.id).emit('systemMessage', 'Your shield saved a player from the Sheriff!');
-                    io.to(targetId).emit('systemMessage', 'You were shot, but your shield broke to revive you!');
+                    io.to(targetId).emit('systemMessage', 'Your shield broke to save you!');
                 } else {
                     target.status = 'dead';
                 }
             } else {
-                attacker.status = 'dead'; // Misfire penalty
+                attacker.status = 'dead'; 
             }
         } else {
             if (game.shieldedPlayerId === targetId) {
                 game.shieldedPlayerId = null;
                 game.protectedHistory.push(targetId);
-                const doc = game.players.find(p => p.role === 'doctor');
-                if(doc) io.to(doc.id).emit('systemMessage', 'Your shield saved a player from an Imposter!');
-                io.to(targetId).emit('systemMessage', 'You were attacked, but your shield broke to revive you!');
+                io.to(targetId).emit('systemMessage', 'Your shield broke to save you!');
                 return;
             } else {
                 target.status = 'dead';
@@ -200,12 +251,12 @@ io.on('connection', (socket) => {
         checkWinCondition(room);
     });
 
-    // --- JAILOR CORE ABILITY ---
+    // --- JAILOR CORE ---
     socket.on('actionJail', ({ room, targetId }) => {
         const game = games[room];
         if (!game || !game.jailorCanJail) return;
         game.jailedPlayerId = targetId;
-        io.to(targetId).emit('systemMessage', 'You are JAILED! You lose vocal and voting rights this coming assembly.');
+        io.to(targetId).emit('systemMessage', 'You are JAILED! No voting this coming assembly.');
         socket.emit('systemMessage', 'Target securely contained.');
     });
 
@@ -217,18 +268,17 @@ io.on('connection', (socket) => {
         if (target) {
             target.status = 'dead';
             game.jailorKillsLeft--;
-            if (target.role !== 'imposter') {
-                game.jailorCanJail = false; // Stripped of abilities
-            }
+            if (target.role !== 'imposter') game.jailorCanJail = false;
             io.to(room).emit('updateGame', game.players);
             checkWinCondition(room);
         }
     });
 
-    // --- ASSEMBLY MECHANICS ---
+    // --- ASSEMBLY MEETING TIMERS WITH EARLY VOTING RULES ---
     socket.on('reportBody', (room) => {
         if(!games[room]) return;
         games[room].state = 'meeting_pending';
+        games[room].votes = {};
         io.to(room).emit('meetingCalled', { caller: socket.id, type: 'Body Report' });
     });
 
@@ -236,10 +286,11 @@ io.on('connection', (socket) => {
         const game = games[room];
         if (!game) return;
         const player = game.players.find(p => p.id === socket.id);
-        if (player && player.meetingsLeft > 0 && player.status === 'alive') {
-            player.meetingsLeft--;
+        if (player && (player.meetingsLeft > 0 || socket.id === game.host) && player.status === 'alive') {
+            if (socket.id !== game.host) player.meetingsLeft--;
             game.state = 'meeting_pending';
-            io.to(room).emit('meetingCalled', { caller: socket.id, type: 'Emergency' });
+            game.votes = {};
+            io.to(room).emit('meetingCalled', { caller: socket.id, type: 'Emergency Assembly' });
         }
     });
 
@@ -248,15 +299,16 @@ io.on('connection', (socket) => {
         if (!game || socket.id !== game.host) return;
         
         game.state = 'meeting_discussion';
-        game.votes = {};
         io.to(room).emit('meetingStarted', { phase: 'discussion', duration: 120, jailedId: game.jailedPlayerId });
 
-        setTimeout(() => {
+        discussionTimeout = setTimeout(() => {
             if (game.state !== 'meeting_discussion') return;
             game.state = 'meeting_voting';
             io.to(room).emit('meetingStarted', { phase: 'voting', duration: 15, jailedId: game.jailedPlayerId });
             
-            setTimeout(() => {
+            checkAllVoted(room); // Catch early votes cast during discussion
+
+            votingTimeout = setTimeout(() => {
                 if (game.state !== 'meeting_voting') return;
                 tallyVotes(room);
             }, 15000);
@@ -265,11 +317,21 @@ io.on('connection', (socket) => {
 
     socket.on('submitVote', ({ room, targetId }) => {
         const game = games[room];
-        if (!game || game.state !== 'meeting_voting' || socket.id === game.jailedPlayerId) return; 
+        if (!game || socket.id === game.jailedPlayerId) return; 
+        
+        const voter = game.players.find(p => p.id === socket.id);
+        if (!voter || voter.status !== 'alive') return;
+
         game.votes[socket.id] = targetId;
+        io.to(room).emit('voteCastFeedback', { voterId: socket.id });
+
+        // Evaluate dynamic polling criteria if inside the voting terminal window
+        if (game.state === 'meeting_voting') {
+            checkAllVoted(room);
+        }
     });
 
-    // --- BACKDOOR BUGTEST ENGINE ---
+    // --- ADMIN SANDBOX ---
     socket.on('adminChangeRole', ({ room, role }) => {
         const game = games[room];
         if (!game) return;
@@ -278,7 +340,6 @@ io.on('connection', (socket) => {
             player.role = role;
             socket.emit('gameStarted', { role: player.role, players: game.players });
             io.to(room).emit('updateGame', game.players);
-            socket.emit('systemMessage', `[DEBUG] Role forced to ${role}`);
         }
     });
 
@@ -294,18 +355,21 @@ io.on('connection', (socket) => {
             resetGame(game, room);
         } else if (scenario === 'force_meeting') {
             game.state = 'meeting_pending';
+            game.votes = {};
             io.to(room).emit('meetingCalled', { caller: socket.id, type: 'Admin Debug Override' });
         }
     });
 
     socket.on('disconnect', () => {
+        // We preserve profiles in games[room].players array to support tab refreshing.
+        // If a lobby is completely empty for over 5 minutes, clean up memory.
         for (const room in games) {
-            let pIndex = games[room].players.findIndex(p => p.id === socket.id);
-            if (pIndex !== -1) {
-                games[room].players.splice(pIndex, 1);
-                if (games[room].players.length === 0) delete games[room];
-                else io.to(room).emit('updateLobby', { players: games[room].players, hostId: games[room].host, roomCode: room });
-                break;
+            const activeConnections = io.sockets.adapter.rooms.get(room);
+            if (!activeConnections || activeConnections.size === 0) {
+                setTimeout(() => {
+                    const checkAgain = io.sockets.adapter.rooms.get(room);
+                    if (!checkAgain || checkAgain.size === 0) delete games[room];
+                }, 300000);
             }
         }
     });
