@@ -7,13 +7,11 @@ let meetingTimerInterval = null;
 let canAct = true;
 let amIHost = false;
 
-// Initialize or pull persistent Device-UUID parameters to handle browser refreshes
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
 }
 const myUUID = sessionStorage.getItem('irl_user_uuid');
 
-// Handle automatic recovery if page properties exist in storage
 window.addEventListener('load', () => {
     const savedRoom = sessionStorage.getItem('irl_room_code');
     const savedUser = sessionStorage.getItem('irl_username');
@@ -235,7 +233,6 @@ socket.on('meetingCalled', (data) => {
     document.getElementById('gameScreen').classList.add('hidden');
     document.getElementById('meetingScreen').classList.remove('hidden');
     
-    // Open voting UI immediately to allow voting during the discussion phase
     document.getElementById('votingUI').classList.remove('hidden');
     document.getElementById('jailorExecuteUI').classList.add('hidden');
     renderVotingPanel();
@@ -258,15 +255,15 @@ socket.on('meetingStarted', (data) => {
 
     if (socket.id === data.jailedId) {
         document.getElementById('votingUI').className = 'hidden';
-        document.getElementById('meetingStatus').innerText = `PHASE: ${data.phase.toUpperCase()} (YOU ARE JAILED - ABILITIES BLOCKED)`;
+        document.getElementById('meetingStatus').innerText = `PHASE: ${data.phase.toUpperCase()} (YOU ARE JAILED)`;
     }
     
     clearInterval(meetingTimerInterval);
-    document.getElementById('meetingTimer').innerText = `Time Remaining: ${left}s`;
+    document.getElementById('meetingTimer').innerText = `${left}s`;
     
     meetingTimerInterval = setInterval(() => {
         left--;
-        document.getElementById('meetingTimer').innerText = `Time Remaining: ${left}s`;
+        document.getElementById('meetingTimer').innerText = `${left}s`;
         if(left <= 0) clearInterval(meetingTimerInterval);
     }, 1000);
 });
@@ -323,7 +320,7 @@ socket.on('meetingEnded', (players) => {
 });
 
 socket.on('gameOver', (data) => {
-    sessionStorage.removeItem('irl_room_code'); // Clean up active runtime state flags
+    sessionStorage.removeItem('irl_room_code'); 
     alert(`Scenario Complete! Winners: ${data.winner}`);
     window.location.reload();
 });

@@ -54,7 +54,6 @@ function checkAllVoted(room) {
     const game = games[room];
     if (!game || game.state !== 'meeting_voting') return;
 
-    // Active voters are players who are ALIVE and NOT JAILED
     const activeVoters = game.players.filter(p => p.status === 'alive' && p.id !== game.jailedPlayerId);
     const totalVotesCast = Object.keys(game.votes).length;
 
@@ -100,23 +99,20 @@ function tallyVotes(room) {
         io.to(room).emit('playerEjected', 'No one (Skipped/Tie)');
     }
     
-    game.votes = {}; // Clear votes for next assembly
+    game.votes = {}; 
     io.to(room).emit('meetingEnded', game.players);
     checkWinCondition(room);
 }
 
 io.on('connection', (socket) => {
     
-    // --- SESSION RESTORATION OR JOIN CHANNEL ---
     socket.on('registerSession', ({ username, room, uuid }) => {
         if (!room || !uuid) return;
         
         const game = games[room];
         if (game) {
-            // Check if player already exists under this UUID session
             let player = game.players.find(p => p.uuid === uuid);
             if (player) {
-                // Re-bind their running profile to the fresh socket ID
                 player.id = socket.id;
                 if (game.host === player.uuid || game.host === socket.id) {
                     game.host = socket.id; 
@@ -127,7 +123,6 @@ io.on('connection', (socket) => {
                     socket.emit('roomCreated', { room });
                     io.to(room).emit('updateLobby', { players: game.players, hostId: game.host, roomCode: room });
                 } else {
-                    // Drop them straight back into active play state
                     socket.emit('roomCreated', { room });
                     socket.emit('gameStarted', { role: player.role, players: game.players });
                     io.to(room).emit('updateGame', game.players);
@@ -203,7 +198,6 @@ io.on('connection', (socket) => {
         game.players.forEach(p => io.to(p.id).emit('gameStarted', { role: p.role, players: game.players }));
     });
 
-    // --- DOCTOR Core ---
     socket.on('actionShield', ({ room, targetId }) => {
         const game = games[room];
         if (!game) return;
@@ -215,7 +209,6 @@ io.on('connection', (socket) => {
         socket.emit('systemMessage', `Shield deployed onto: ${targetObj ? targetObj.username : 'Unknown'}`);
     });
 
-    // --- DAMAGE CORE ENGINE ---
     socket.on('actionKill', ({ room, targetId, isSheriff }) => {
         const game = games[room];
         if (!game) return;
@@ -251,7 +244,6 @@ io.on('connection', (socket) => {
         checkWinCondition(room);
     });
 
-    // --- JAILOR CORE ---
     socket.on('actionJail', ({ room, targetId }) => {
         const game = games[room];
         if (!game || !game.jailorCanJail) return;
@@ -274,7 +266,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- ASSEMBLY MEETING TIMERS WITH EARLY VOTING RULES ---
     socket.on('reportBody', (room) => {
         if(!games[room]) return;
         games[room].state = 'meeting_pending';
@@ -301,13 +292,15 @@ io.on('connection', (socket) => {
         game.state = 'meeting_discussion';
         io.to(room).emit('meetingStarted', { phase: 'discussion', duration: 120, jailedId: game.jailedPlayerId });
 
+        clearTimeout(discussionTimeout);
         discussionTimeout = setTimeout(() => {
             if (game.state !== 'meeting_discussion') return;
             game.state = 'meeting_voting';
             io.to(room).emit('meetingStarted', { phase: 'voting', duration: 15, jailedId: game.jailedPlayerId });
             
-            checkAllVoted(room); // Catch early votes cast during discussion
+            checkAllVoted(room); 
 
+            clearTimeout(votingTimeout);
             votingTimeout = setTimeout(() => {
                 if (game.state !== 'meeting_voting') return;
                 tallyVotes(room);
@@ -325,13 +318,11 @@ io.on('connection', (socket) => {
         game.votes[socket.id] = targetId;
         io.to(room).emit('voteCastFeedback', { voterId: socket.id });
 
-        // Evaluate dynamic polling criteria if inside the voting terminal window
         if (game.state === 'meeting_voting') {
             checkAllVoted(room);
         }
     });
 
-    // --- ADMIN SANDBOX ---
     socket.on('adminChangeRole', ({ room, role }) => {
         const game = games[room];
         if (!game) return;
@@ -361,8 +352,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        // We preserve profiles in games[room].players array to support tab refreshing.
-        // If a lobby is completely empty for over 5 minutes, clean up memory.
         for (const room in games) {
             const activeConnections = io.sockets.adapter.rooms.get(room);
             if (!activeConnections || activeConnections.size === 0) {
