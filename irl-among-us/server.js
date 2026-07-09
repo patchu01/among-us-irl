@@ -127,9 +127,11 @@ io.on('connection', (socket) => {
                     socket.emit('gameStarted', { role: player.role, players: game.players });
                     io.to(room).emit('updateGame', game.players);
                     
-                    if (game.state === 'meeting_discussion' || game.state === 'meeting_voting') {
+                    if (game.state === 'meeting_pending') {
+                        socket.emit('meetingCalled', { caller: null, type: 'Assembly Sign-In' });
+                    } else if (game.state === 'meeting_discussion' || game.state === 'meeting_voting') {
                         const currentPhase = game.state === 'meeting_discussion' ? 'discussion' : 'voting';
-                        socket.emit('meetingCalled', { caller: null, type: 'Reconnection Synchronization' });
+                        socket.emit('meetingCalled', { caller: null, type: 'Assembly Sign-In' });
                         socket.emit('meetingStarted', { phase: currentPhase, duration: 15, jailedId: game.jailedPlayerId });
                     }
                 }

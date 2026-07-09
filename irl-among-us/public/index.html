@@ -23,6 +23,7 @@
         .panel-box { background: #1c1c1e; padding: 15px; border-radius: 12px; margin: 15px 0; border: 1px solid #3a3a3c; text-align: left; }
         .panel-box h3 { margin-top: 0; color: #ff9f0a; }
         #meetingTimer { font-size: 32px; font-weight: bold; color: #ff453a; background: #1c1c1e; padding: 10px; border-radius: 8px; border: 1px solid #3a3a3c; display: inline-block; margin: 15px 0; min-width: 120px; }
+        .alert-banner { background: #ff9f0a; color: black; font-weight: bold; padding: 15px; border-radius: 10px; margin: 15px 0; font-size: 18px; text-transform: uppercase; }
     </style>
 </head>
 <body>
@@ -71,7 +72,6 @@
 
         <button class="btn" id="reportBtn" onclick="reportBody()">🚨 Report Body</button>
         <button class="btn btn-alt" id="emergencyBtn" onclick="callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
-        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="startMeeting()">Host: Trigger Discussion Phase</button>
 
         <div id="doctorUI" class="panel-box hidden">
             <h3>Doctor Field Terminal</h3>
@@ -91,7 +91,12 @@
 
     <div id="meetingScreen" class="hidden">
         <h2 id="meetingStatus">Assembly Triggered</h2>
+        
+        <div id="gatherPrompt" class="alert-banner">🏃 Head to the designated meeting room location now!</div>
+        
         <div id="meetingTimer">00s</div>
+        
+        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="startMeeting()">Host: Begin Discussion</button>
         
         <div id="jailorExecuteUI" class="panel-box hidden">
             <h3 style="color:#ff453a;">Jailor Martial Execution Terminal</h3>
