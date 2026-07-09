@@ -1,0 +1,13 @@
+{
+  "name": "irl-among-us-mobile",
+  "version": "1.0.0",
+  "description": "Among Us in Real Life Mobile Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
