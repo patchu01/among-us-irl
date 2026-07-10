@@ -24,7 +24,8 @@ io.on('connection', (socket) => {
             timer: null,
             tasksCompleted: 0,
             tasksRequired: 0,
-            roleConfig: { imposters: 1, doctors: 1, sheriffs: 0, jailors: 0 }
+            // FIX: Defaults now strictly match the client-side UI to prevent unselected roles
+            roleConfig: { imposters: 1, doctors: 0, sheriffs: 0, jailors: 0 }
         };
         
         joinPlayerToRoom(socket, data.username, data.uuid, roomCode);
@@ -61,23 +62,30 @@ io.on('connection', (socket) => {
         room.tasksCompleted = 0;
         const players = room.players;
         
+        // FIX: Prioritize imposters first, then fill optional roles, strictly enforcing counts
         let configuredRoles = [];
         for (let i = 0; i < room.roleConfig.imposters; i++) configuredRoles.push('imposter');
-        for (let i = 0; i < room.roleConfig.doctors; i++) configuredRoles.push('doctor');
-        for (let i = 0; i < room.roleConfig.sheriffs; i++) configuredRoles.push('sheriff');
-        for (let i = 0; i < room.roleConfig.jailors; i++) configuredRoles.push('jailor');
+        
+        let optionalRoles = [];
+        for (let i = 0; i < room.roleConfig.doctors; i++) optionalRoles.push('doctor');
+        for (let i = 0; i < room.roleConfig.sheriffs; i++) optionalRoles.push('sheriff');
+        for (let i = 0; i < room.roleConfig.jailors; i++) optionalRoles.push('jailor');
 
-        configuredRoles.sort(() => Math.random() - 0.5);
+        // Shuffle optional roles so they compete fairly if player count is lower than config
+        optionalRoles.sort(() => Math.random() - 0.5);
+        configuredRoles = configuredRoles.concat(optionalRoles);
 
         let rolePool = [];
         for (let i = 0; i < Math.min(configuredRoles.length, players.length); i++) {
             rolePool.push(configuredRoles[i]);
         }
 
+        // Fill remaining slots with crewmates
         while (rolePool.length < players.length) {
             rolePool.push('crewmate');
         }
 
+        // Final shuffle layout assignment
         rolePool.sort(() => Math.random() - 0.5);
 
         const totalCrews = room.players.length - room.players.filter(p => p.role === 'imposter').length;
@@ -92,6 +100,8 @@ io.on('connection', (socket) => {
 
         io.to(roomCode).emit('updateGame', players);
         io.to(roomCode).emit('tasksUpdated', { completed: room.tasksCompleted, required: room.tasksRequired });
+        
+        checkWinConditions(roomCode);
     });
 
     socket.on('logTask', (roomCode) => {
@@ -291,9 +301,22 @@ function checkWinConditions(roomCode) {
         triggerGameOver(roomCode, 'Crewmates (Imposters Eliminated!)');
         return true;
     }
-    if (aliveImposters >= aliveNonImposters) {
-        triggerGameOver(roomCode, 'Imposters (Crew Overrun!)');
-        return true;
+
+    // FIX: Aaa testing override conditional check
+    const isTestingOverride = room.players.some(p => p.username === 'Aaa');
+
+    if (isTestingOverride) {
+        // If "Aaa" is present, Imposters must actually kill the final crewmate to win (Testing Rules)
+        if (aliveNonImposters === 0) {
+            triggerGameOver(roomCode, 'Imposters (Crew Eliminated!)');
+            return true;
+        }
+    } else {
+        // Standard Rules: Imposters win immediately upon matching or exceeding living crew counts
+        if (aliveImposters >= aliveNonImposters) {
+            triggerGameOver(roomCode, 'Imposters (Crew Overrun!)');
+            return true;
+        }
     }
 
     return false;
