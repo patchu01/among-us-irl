@@ -9,7 +9,6 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Room structure management
 const rooms = {};
 
 io.on('connection', (socket) => {
@@ -20,10 +19,11 @@ io.on('connection', (socket) => {
         rooms[roomCode] = {
             hostId: socket.id,
             players: [],
-            state: 'lobby', // lobby, running, meeting_gather, meeting_discuss
-            votes: {}, // voterId: targetId
+            state: 'lobby',
+            votes: {},
             timer: null,
-            // Default role configuration limits
+            tasksCompleted: 0,
+            tasksRequired: 0,
             roleConfig: { imposters: 1, doctors: 1, sheriffs: 0, jailors: 0 }
         };
         
@@ -43,7 +43,6 @@ io.on('connection', (socket) => {
         const room = rooms[data.room];
         if (!room || room.hostId !== socket.id || room.state !== 'lobby') return;
         
-        // Enforce maximum caps assigned by constraints
         room.roleConfig = {
             imposters: parseInt(data.config.imposters) || 1,
             doctors: Math.min(1, parseInt(data.config.doctors) || 0),
@@ -59,31 +58,47 @@ io.on('connection', (socket) => {
         if (!room || room.hostId !== socket.id) return;
 
         room.state = 'running';
+        room.tasksCompleted = 0;
         const players = room.players;
         
-        // Dynamically compile structural array based on dynamic config settings
         let rolePool = [];
         for (let i = 0; i < room.roleConfig.imposters; i++) rolePool.push('imposter');
         for (let i = 0; i < room.roleConfig.doctors; i++) rolePool.push('doctor');
         for (let i = 0; i < room.roleConfig.sheriffs; i++) rolePool.push('sheriff');
         for (let i = 0; i < room.roleConfig.jailors; i++) rolePool.push('jailor');
 
-        // Fill remaining configurations automatically with basic Crewmates
         while (rolePool.length < players.length) {
             rolePool.push('crewmate');
         }
 
-        // Shuffle
         rolePool.sort(() => Math.random() - 0.5);
+
+        // Calculate total tasks based on non-imposters (e.g., 3 tasks per crew-aligned player)
+        const totalCrews = players.length - room.roleConfig.imposters;
+        room.tasksRequired = Math.max(1, totalCrews * 3);
 
         players.forEach((p, idx) => {
             p.role = rolePool[idx];
             p.status = 'alive';
             p.meetingsLeft = 1;
-            io.to(p.id).emit('gameStarted', { role: p.role, players });
+            io.to(p.id).emit('gameStarted', { role: p.role, players, tasksRequired: room.tasksRequired });
         });
 
         io.to(roomCode).emit('updateGame', players);
+        io.to(roomCode).emit('tasksUpdated', { completed: room.tasksCompleted, required: room.tasksRequired });
+    });
+
+    socket.on('logTask', (roomCode) => {
+        const room = rooms[roomCode];
+        if (!room || room.state !== 'running') return;
+
+        const player = room.players.find(p => p.id === socket.id);
+        if (!player || player.role === 'imposter' || player.status === 'dead') return;
+
+        room.tasksCompleted++;
+        io.to(roomCode).emit('tasksUpdated', { completed: room.tasksCompleted, required: room.tasksRequired });
+
+        checkWinConditions(roomCode);
     });
 
     socket.on('callMeeting', (roomCode) => {
@@ -91,6 +106,7 @@ io.on('connection', (socket) => {
         if (!room || room.state !== 'running') return;
 
         const caller = room.players.find(p => p.id === socket.id);
+        // CRITICAL: Block ghosts from executing system interactions
         if (!caller || caller.status === 'dead' || caller.meetingsLeft <= 0) return;
 
         caller.meetingsLeft--;
@@ -100,6 +116,11 @@ io.on('connection', (socket) => {
     socket.on('reportBody', (roomCode) => {
         const room = rooms[roomCode];
         if (!room || room.state !== 'running') return;
+
+        const reporter = room.players.find(p => p.id === socket.id);
+        // CRITICAL: Prevent ghosts from reporting bodies
+        if (!reporter || reporter.status === 'dead') return;
+
         triggerAssembly(roomCode, 'Body Report', socket.id);
     });
 
@@ -110,7 +131,7 @@ io.on('connection', (socket) => {
         room.state = 'meeting_discuss';
         room.votes = {};
         
-        let duration = 60; // 60-second voting framework duration
+        let duration = 60;
         io.to(roomCode).emit('meetingStarted', { phase: 'discussion', duration });
 
         clearInterval(room.timer);
@@ -125,7 +146,6 @@ io.on('connection', (socket) => {
 
     socket.on('submitVote', (data) => {
         const room = rooms[data.room];
-        // CRITICAL BUG FIX: Ensure phase matches discussion layout. Block votes during gathering!
         if (!room || room.state !== 'meeting_discuss') return; 
 
         const voter = room.players.find(p => p.id === socket.id);
@@ -134,7 +154,6 @@ io.on('connection', (socket) => {
         room.votes[socket.id] = data.targetId;
         io.to(data.room).emit('voteCastFeedback', { voterId: socket.id });
 
-        // Evaluate whether every living player has submitted their registry choice
         const alivePlayers = room.players.filter(p => p.status === 'alive');
         const totalVotesCast = Object.keys(room.votes).length;
 
@@ -144,7 +163,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ... Standard custom actions handling (Kill, Shield, Jail, etc.) ...
     socket.on('actionKill', (data) => {
         const room = rooms[data.room];
         if (!room || room.state !== 'running') return;
@@ -152,11 +170,11 @@ io.on('connection', (socket) => {
         if (target) {
             target.status = 'dead';
             io.to(data.room).emit('updateGame', room.players);
+            checkWinConditions(data.room);
         }
     });
 
     socket.on('disconnect', () => {
-        // Simple scrubbing loop cleanly stripping ghost setups
         for (const code in rooms) {
             rooms[code].players = rooms[code].players.filter(p => p.id !== socket.id);
             if (rooms[code].players.length === 0) {
@@ -164,6 +182,7 @@ io.on('connection', (socket) => {
                 delete rooms[code];
             } else {
                 io.to(code).emit('updateLobby', { roomCode: code, hostId: rooms[code].hostId, players: rooms[code].players });
+                checkWinConditions(code);
             }
         }
     });
@@ -180,7 +199,7 @@ function joinPlayerToRoom(socket, username, uuid, roomCode) {
 
 function triggerAssembly(roomCode, type, callerId) {
     const room = rooms[roomCode];
-    room.state = 'meeting_gather'; // Shift structural state away from operational running/discuss modes
+    room.state = 'meeting_gather';
     io.to(roomCode).emit('meetingCalled', { type, caller: callerId });
 }
 
@@ -215,8 +234,44 @@ function evaluateVotes(roomCode) {
         io.to(roomCode).emit('playerEjected', targetPlayer.username);
     }
 
-    room.state = 'running';
-    io.to(roomCode).emit('meetingEnded', room.players);
+    if (!checkWinConditions(roomCode)) {
+        room.state = 'running';
+        io.to(roomCode).emit('meetingEnded', room.players);
+    }
+}
+
+function checkWinConditions(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.state === 'lobby' || room.state === 'game_over') return false;
+
+    const aliveImposters = room.players.filter(p => p.status === 'alive' && p.role === 'imposter').length;
+    const aliveNonImposters = room.players.filter(p => p.status === 'alive' && p.role !== 'imposter').length;
+
+    // Crew Win: All tasks completed
+    if (room.tasksCompleted >= room.tasksRequired) {
+        triggerGameOver(roomCode, 'Crewmates (All Tasks Completed!)');
+        return true;
+    }
+
+    // Crew Win: All Imposters are eliminated
+    if (aliveImposters === 0) {
+        triggerGameOver(roomCode, 'Crewmates (Imposters Eliminated!)');
+        return true;
+    }
+
+    // Imposter Win: Alive imposters >= alive non-imposters
+    if (aliveImposters >= aliveNonImposters) {
+        triggerGameOver(roomCode, 'Imposters (Crew Overrun!)');
+        return true;
+    }
+
+    return false;
+}
+
+function triggerGameOver(roomCode, winnerGroup) {
+    rooms[roomCode].state = 'game_over';
+    clearInterval(rooms[roomCode].timer);
+    io.to(roomCode).emit('gameOverState', { winner: winnerGroup });
 }
 
 const PORT = process.env.PORT || 3000;

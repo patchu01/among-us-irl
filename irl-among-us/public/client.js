@@ -4,10 +4,13 @@ let currentRoom = '';
 let myRole = '';
 let gamePlayers = [];
 let cooldownTimer = null;
+let taskTimer = null;
 let meetingTimerInterval = null;
 let canAct = true;
+let canTask = true;
 let amIHost = false;
-let meetingPhase = 'gather'; // Tracking internal phase constraint state
+let meetingPhase = 'gather';
+let selectedVoteTarget = null; // Tracks unconfirmed vote target selection
 
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
@@ -56,7 +59,6 @@ window.joinRoom = function() {
     socket.emit('joinLobby', { username, room: currentRoom, uuid: myUUID });
 };
 
-// Push customized configuration to server whenever selections change
 window.pushRoleConfig = function() {
     if (!amIHost) return;
     const config = {
@@ -76,6 +78,32 @@ window.startMeeting = function() {
     document.getElementById('hostMeetingBtn').classList.add('hidden'); 
 };
 
+window.submitTaskDone = function() {
+    if (!canTask) return;
+    socket.emit('logTask', currentRoom);
+    
+    canTask = false;
+    let left = 30;
+    const taskBtn = document.getElementById('taskBtn');
+    const cooldownText = document.getElementById('taskCooldownDisplay');
+    
+    taskBtn.classList.add('btn-disabled');
+    cooldownText.innerText = `Task Log Cooldown: ${left}s`;
+    
+    clearInterval(taskTimer);
+    taskTimer = setInterval(() => {
+        left--;
+        cooldownText.innerText = `Task Log Cooldown: ${left}s`;
+        if (left <= 0) {
+            clearInterval(taskTimer);
+            canTask = true;
+            cooldownText.innerText = '';
+            const me = gamePlayers.find(p => p.id === socket.id);
+            if (me && me.status === 'alive') taskBtn.classList.remove('btn-disabled');
+        }
+    }, 1000);
+};
+
 socket.on('joinError', (err) => {
     sessionStorage.clear();
     alert(err);
@@ -87,7 +115,6 @@ socket.on('roomCreated', (data) => {
 });
 
 socket.on('roleConfigUpdated', (config) => {
-    // Sync UI components seamlessly across non-host clients
     if (!amIHost) {
         document.getElementById('cfgImposters').value = config.imposters;
         document.getElementById('cfgDoctors').value = config.doctors;
@@ -101,6 +128,7 @@ socket.on('updateLobby', (data) => {
     document.getElementById('lobbyScreen').classList.remove('hidden');
     document.getElementById('gameScreen').classList.add('hidden');
     document.getElementById('meetingScreen').classList.add('hidden');
+    document.getElementById('gameOverScreen').classList.add('hidden');
     
     currentRoom = data.roomCode;
     document.getElementById('lobbyRoomCodeDisplay').innerText = data.roomCode;
@@ -108,11 +136,9 @@ socket.on('updateLobby', (data) => {
     amIHost = (socket.id === data.hostId);
     if (amIHost) {
         document.getElementById('startBtn').classList.remove('hidden');
-        // Enable selectors for host only
         document.querySelectorAll('#hostSettingsPanel select').forEach(s => s.disabled = false);
     } else {
         document.getElementById('startBtn').classList.add('hidden');
-        // Lock selectors for standard clients
         document.querySelectorAll('#hostSettingsPanel select').forEach(s => s.disabled = true);
     }
     
@@ -136,11 +162,19 @@ socket.on('gameStarted', (data) => {
     roleEl.innerText = "Role: " + myRole.toUpperCase();
     roleEl.style.color = (myRole === 'imposter') ? '#ff453a' : '#30d158';
     
-    if (sessionStorage.getItem('irl_username') === 'admin141211') {
-        document.getElementById('adminPanel').classList.remove('hidden');
+    if (myRole !== 'imposter') {
+        document.getElementById('taskBtn').classList.remove('hidden');
+    } else {
+        document.getElementById('taskBtn').classList.add('hidden');
     }
 
     startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+});
+
+socket.on('tasksUpdated', (data) => {
+    const percentage = (data.completed / data.required) * 100;
+    document.getElementById('taskBarFill').style.width = `${percentage}%`;
+    document.getElementById('taskBarText').innerText = `Tasks: ${data.completed} / ${data.required}`;
 });
 
 function startLocalCooldown(seconds) {
@@ -179,10 +213,14 @@ function renderActionPanel() {
 
     if (me.status === 'dead') {
         panel.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (GHOST MODE)</div>';
+        document.getElementById('taskBtn').classList.add('hidden');
+        document.getElementById('reportBtn').classList.add('hidden');
+        document.getElementById('emergencyBtn').classList.add('hidden');
+        document.getElementById('doctorUI').classList.add('hidden');
+        document.getElementById('jailorUI').classList.add('hidden');
         return;
     }
 
-    // Dynamic select options render parsing
     if (myRole === 'doctor') {
         document.getElementById('doctorUI').classList.remove('hidden');
         const select = document.getElementById('docTargetSelect');
@@ -230,21 +268,17 @@ window.executeJailedSuspect = function() {
     if(val) socket.emit('actionExecute', { room: currentRoom, targetId: val });
 };
 
-window.adminRoleOverride = function() {
-    const role = document.getElementById('adminRoleSelect').value;
-    socket.emit('adminChangeRole', { room: currentRoom, role });
-};
-
 socket.on('updateGame', (players) => { gamePlayers = players; renderActionPanel(); });
 
 socket.on('meetingCalled', (data) => {
-    meetingPhase = 'gather'; // Lock registration phases
+    meetingPhase = 'gather';
+    selectedVoteTarget = null; // Clean stage
     clearInterval(cooldownTimer);
     clearInterval(meetingTimerInterval);
     document.getElementById('gameScreen').classList.add('hidden');
     document.getElementById('meetingScreen').classList.remove('hidden');
     
-    document.getElementById('votingUI').classList.add('hidden'); // Enforce hiding block during gathering route
+    document.getElementById('votingUI').classList.add('hidden');
     document.getElementById('jailorExecuteUI').classList.add('hidden');
     document.getElementById('gatherPrompt').classList.remove('hidden'); 
     document.getElementById('meetingTimer').innerText = '--';
@@ -258,11 +292,11 @@ socket.on('meetingCalled', (data) => {
 });
 
 socket.on('meetingStarted', (data) => {
-    meetingPhase = 'discuss'; // Unlock interactive components safely
+    meetingPhase = 'discuss';
     document.getElementById('gatherPrompt').classList.add('hidden'); 
     document.getElementById('meetingStatus').innerText = `PHASE: DISCUSSION / VOTING`;
     
-    document.getElementById('votingUI').classList.remove('hidden'); // Safe visibility call
+    document.getElementById('votingUI').classList.remove('hidden'); 
     renderVotingPanel();
 
     let left = data.duration;
@@ -280,7 +314,6 @@ function renderVotingPanel() {
     const container = document.getElementById('voteList');
     container.innerHTML = '';
     
-    // Safety lock validation: if phase isn't active, ensure it stays empty
     if(meetingPhase !== 'discuss') return;
 
     const me = gamePlayers.find(p => p.id === socket.id);
@@ -290,23 +323,64 @@ function renderVotingPanel() {
         return;
     }
     
-    document.getElementById('skipVoteBtn').className = 'btn btn-alt';
+    // Reconfigure basic layout components for skip element selection
+    const skipBtn = document.getElementById('skipVoteBtn');
+    skipBtn.className = 'btn btn-alt';
+    skipBtn.innerHTML = 'Skip Registration';
+    skipBtn.onclick = () => window.selectVoteTarget('skip', skipBtn);
 
     gamePlayers.forEach(p => {
         if (p.status === 'alive') {
+            let rowDiv = document.createElement('div');
+            rowDiv.style.display = 'flex';
+            rowDiv.style.alignItems = 'center';
+            rowDiv.style.margin = '5px 0';
+            rowDiv.id = `vote-row-${p.id}`;
+
             let btn = document.createElement('button');
             btn.className = 'btn btn-alt';
+            btn.style.margin = '0';
+            btn.style.flex = '1';
             btn.id = `vote-btn-${p.id}`;
             btn.innerText = p.username;
-            btn.onclick = () => window.submitVote(p.id);
-            container.appendChild(btn);
+            btn.onclick = () => window.selectVoteTarget(p.id, rowDiv);
+            
+            rowDiv.appendChild(btn);
+            container.appendChild(rowDiv);
         }
     });
 }
 
-window.submitVote = function(targetId) {
-    socket.emit('submitVote', { room: currentRoom, targetId });
+// Intermediate staging method handling pre-selection and confirm tick rendering
+window.selectVoteTarget = function(targetId, elementContainer) {
+    // Remove previous tick markers anywhere on screen
+    const oldTick = document.getElementById('voteConfirmTick');
+    if (oldTick) oldTick.remove();
+
+    selectedVoteTarget = targetId;
+
+    // Append confirmation tick next to the user selection target box
+    let confirmBtn = document.createElement('button');
+    confirmBtn.id = 'voteConfirmTick';
+    confirmBtn.className = 'btn btn-confirm';
+    confirmBtn.innerText = '✓';
+    confirmBtn.onclick = (e) => {
+        e.stopPropagation(); // Avoid refiring container loops
+        window.confirmAndSubmitVote();
+    };
+
+    elementContainer.appendChild(confirmBtn);
+};
+
+window.confirmAndSubmitVote = function() {
+    if (!selectedVoteTarget) return;
+    
+    socket.emit('submitVote', { room: currentRoom, targetId: selectedVoteTarget });
+    
+    // Clean interactive state assets completely
     document.getElementById('skipVoteBtn').className = 'hidden';
+    const oldTick = document.getElementById('voteConfirmTick');
+    if (oldTick) oldTick.remove();
     
     document.querySelectorAll('#voteList button').forEach(btn => {
         btn.disabled = true;
@@ -330,10 +404,13 @@ socket.on('voteCastFeedback', (data) => {
     }
 });
 
-socket.on('playerEjected', (result) => alert(`Assembly Verdict: ${result} was exiled.`));
+socket.on('playerEjected', (result) => {
+    document.getElementById('meetingStatus').innerText = `Assembly Result: ${result} was exiled.`;
+});
 
 socket.on('meetingEnded', (players) => {
     gamePlayers = players;
+    selectedVoteTarget = null;
     clearInterval(meetingTimerInterval);
     document.getElementById('meetingScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
@@ -341,5 +418,33 @@ socket.on('meetingEnded', (players) => {
     const notice = document.getElementById('voteStatusNotice');
     if (notice) notice.remove();
 
+    const me = gamePlayers.find(p => p.id === socket.id);
+    if (me && me.status === 'alive') {
+        document.getElementById('reportBtn').classList.remove('hidden');
+        document.getElementById('emergencyBtn').classList.remove('hidden');
+        if (myRole !== 'imposter') document.getElementById('taskBtn').classList.remove('hidden');
+    }
+
     startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+});
+
+socket.on('gameOverState', (data) => {
+    clearInterval(cooldownTimer);
+    clearInterval(taskTimer);
+    clearInterval(meetingTimerInterval);
+    
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('lobbyScreen').classList.add('hidden');
+    document.getElementById('gameScreen').classList.add('hidden');
+    document.getElementById('meetingScreen').classList.add('hidden');
+    
+    const goScreen = document.getElementById('gameOverScreen');
+    const winHeader = document.getElementById('winHeader');
+    
+    goScreen.classList.remove('hidden');
+    winHeader.innerText = `${data.winner.split(' ')[0]} Victory!`.toUpperCase();
+    winHeader.style.color = data.winner.toLowerCase().includes('imposter') ? '#ff453a' : '#30d158';
+    document.getElementById('winDetails').innerText = data.winner;
+    
+    sessionStorage.removeItem('irl_room_code');
 });
