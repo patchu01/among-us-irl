@@ -12,11 +12,12 @@
         .tab-btn { flex: 1; padding: 15px; background: transparent; color: #8e8e93; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
         .tab-btn.active { background: #333; color: white; }
         input, select { width: 100%; box-sizing: border-box; padding: 15px; margin: 10px 0; border-radius: 8px; border: 2px solid #333; font-size: 16px; background: #1e1e1e; color: white; }
-        .btn { display: block; width: 100%; box-sizing: border-box; padding: 16px; margin: 15px 0; cursor: pointer; background: #ff3b30; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; text-transform: uppercase; }
+        .btn { display: block; width: 100%; box-sizing: border-box; padding: 16px; margin: 15px 0; cursor: pointer; background: #ff3b30; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; text-transform: uppercase; transition: background 0.2s; }
         .btn-alt { background: #0a84ff; }
         .btn-kill { background: #ff453a; }
         .btn-task { background: #30d158; color: white; }
         .btn-disabled { background: #2c2c2e !important; color: #8e8e93; cursor: not-allowed; }
+        .btn-confirm { background: #30d158 !important; color: white !important; width: auto !important; display: inline-block !important; margin-left: 10px !important; padding: 10px 15px !important; border-radius: 8px !important; }
         .player-card { border: 1px solid #2c2c2e; padding: 14px; margin: 10px 0; border-radius: 12px; background: #1c1c1e; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
         #roomHeader { font-size: 24px; color: #ff9f0a; font-weight: bold; margin-bottom: 15px; letter-spacing: 3px; }
         #systemMessages { color: #ffd60a; font-weight: bold; margin: 15px 0; min-height: 20px; }
@@ -31,15 +32,7 @@
         .task-bar-fill { background: #30d158; height: 100%; width: 0%; transition: width 0.4s ease; }
         .task-bar-text { position: absolute; top: 0; width: 100%; text-align: center; font-size: 14px; font-weight: bold; line-height: 24px; color: white; }
         .win-banner { font-size: 36px; text-transform: uppercase; font-weight: 900; margin-top: 40px; }
-        .btn-confirm {
-    background: #30d158 !important; /* Green */
-    color: white !important;
-    width: auto !important;
-    display: inline-block !important;
-    margin-left: 10px !important;
-    padding: 10px 15px !important;
-    border-radius: 8px !important;
-}
+        #privacyContainer { background: #121212; border: 2px dashed #3a3a3c; border-radius: 10px; padding: 15px; margin: 15px 0; }
     </style>
 </head>
 <body>
@@ -97,32 +90,37 @@
     </div>
 
     <div id="gameScreen" class="hidden">
-        <h2 id="roleDisplay"></h2>
         
-        <div class="task-bar-container">
-            <div id="taskBarFill" class="task-bar-fill"></div>
-            <div id="taskBarText" class="task-bar-text">Tasks: 0 / 0</div>
-        </div>
+        <button class="btn btn-alt" id="togglePrivacyBtn" onclick="window.togglePrivacy()">👀 Reveal Privacy Screen</button>
+        
+        <div id="privacyContainer" class="hidden">
+            <h2 id="roleDisplay"></h2>
+            
+            <div class="task-bar-container">
+                <div id="taskBarFill" class="task-bar-fill"></div>
+                <div id="taskBarText" class="task-bar-text">Tasks: 0 / 0</div>
+            </div>
 
+            <button class="btn btn-task hidden" id="taskBtn" onclick="window.submitTaskDone()">✅ Log Task Done</button>
+            <div id="taskCooldownDisplay" style="color:#30d158; font-weight:bold; margin: 5px 0;"></div>
+
+            <div id="doctorUI" class="panel-box hidden">
+                <h3>Doctor Field Terminal</h3>
+                <label>Select Patient to Shield:</label>
+                <select id="docTargetSelect" onchange="window.executeDoctorShield()"></select>
+            </div>
+
+            <div id="jailorUI" class="panel-box hidden">
+                <h3>Jailor Isolation Terminal</h3>
+                <label>Select Suspect to Detain (20s CD):</label>
+                <select id="jailorTargetSelect" onchange="window.executeJailorDetain()"></select>
+            </div>
+        </div>
         <div id="timers"></div>
-        <div id="taskCooldownDisplay" style="color:#30d158; font-weight:bold; margin: 5px 0;"></div>
         <div id="systemMessages"></div>
 
-        <button class="btn btn-task hidden" id="taskBtn" onclick="window.submitTaskDone()">✅ Log Task Done</button>
         <button class="btn" id="reportBtn" onclick="window.reportBody()">🚨 Report Body</button>
         <button class="btn btn-alt" id="emergencyBtn" onclick="window.callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
-
-        <div id="doctorUI" class="panel-box hidden">
-            <h3>Doctor Field Terminal</h3>
-            <label>Select Patient to Shield:</label>
-            <select id="docTargetSelect" onchange="window.executeDoctorShield()"></select>
-        </div>
-
-        <div id="jailorUI" class="panel-box hidden">
-            <h3>Jailor Isolation Terminal</h3>
-            <label>Select Suspect to Detain (20s CD):</label>
-            <select id="jailorTargetSelect" onchange="window.executeJailorDetain()"></select>
-        </div>
 
         <h3>Active Track Manifest</h3>
         <div id="playersActionList"></div>
@@ -150,7 +148,9 @@
     <div id="gameOverScreen" class="hidden">
         <h1 class="win-banner" id="winHeader">VICTORY</h1>
         <h3 id="winDetails" style="color: #8e8e93;">Summary Reason</h3>
-        <button class="btn btn-alt" style="margin-top:40px;" onclick="window.location.reload()">Return to Setup</button>
+        
+        <button class="btn btn-alt hidden" id="returnLobbyBtn" style="margin-top:40px;" onclick="window.triggerReturnLobby()">Return to Lobby (Host)</button>
+        <p id="waitingHostText" class="hidden" style="color:#8e8e93; margin-top:30px;">Waiting for host to return to lobby...</p>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>

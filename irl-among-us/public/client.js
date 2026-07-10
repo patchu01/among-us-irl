@@ -10,7 +10,8 @@ let canAct = true;
 let canTask = true;
 let amIHost = false;
 let meetingPhase = 'gather';
-let selectedVoteTarget = null; // Tracks unconfirmed vote target selection
+let selectedVoteTarget = null;
+let privacyOpen = false; // Tracks flip screen state
 
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
@@ -78,6 +79,26 @@ window.startMeeting = function() {
     document.getElementById('hostMeetingBtn').classList.add('hidden'); 
 };
 
+// Flip Screen Logic Control
+window.togglePrivacy = function() {
+    privacyOpen = !privacyOpen;
+    const container = document.getElementById('privacyContainer');
+    const btn = document.getElementById('togglePrivacyBtn');
+    if (privacyOpen) {
+        container.classList.remove('hidden');
+        btn.innerText = "🔒 Hide Privacy Screen";
+        btn.style.background = "#ff453a";
+    } else {
+        container.classList.add('hidden');
+        btn.innerText = "👀 Reveal Privacy Screen";
+        btn.style.background = "#0a84ff";
+    }
+};
+
+window.triggerReturnLobby = function() {
+    if (amIHost) socket.emit('returnToLobby', currentRoom);
+};
+
 window.submitTaskDone = function() {
     if (!canTask) return;
     socket.emit('logTask', currentRoom);
@@ -123,6 +144,7 @@ socket.on('roleConfigUpdated', (config) => {
     }
 });
 
+// Resets interface comprehensively (especially when returning from a GameOver state)
 socket.on('updateLobby', (data) => {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('lobbyScreen').classList.remove('hidden');
@@ -155,6 +177,13 @@ socket.on('updateLobby', (data) => {
 socket.on('gameStarted', (data) => {
     myRole = data.role;
     gamePlayers = data.players;
+    
+    // Ensure privacy filter is securely closed before starting
+    privacyOpen = false;
+    document.getElementById('privacyContainer').classList.add('hidden');
+    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
+    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
+
     document.getElementById('lobbyScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
     
@@ -272,9 +301,16 @@ socket.on('updateGame', (players) => { gamePlayers = players; renderActionPanel(
 
 socket.on('meetingCalled', (data) => {
     meetingPhase = 'gather';
-    selectedVoteTarget = null; // Clean stage
+    selectedVoteTarget = null; 
     clearInterval(cooldownTimer);
     clearInterval(meetingTimerInterval);
+    
+    // Automatically close the privacy filter to prevent leaving it open
+    privacyOpen = false;
+    document.getElementById('privacyContainer').classList.add('hidden');
+    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
+    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
+
     document.getElementById('gameScreen').classList.add('hidden');
     document.getElementById('meetingScreen').classList.remove('hidden');
     
@@ -323,7 +359,6 @@ function renderVotingPanel() {
         return;
     }
     
-    // Reconfigure basic layout components for skip element selection
     const skipBtn = document.getElementById('skipVoteBtn');
     skipBtn.className = 'btn btn-alt';
     skipBtn.innerHTML = 'Skip Registration';
@@ -351,21 +386,18 @@ function renderVotingPanel() {
     });
 }
 
-// Intermediate staging method handling pre-selection and confirm tick rendering
 window.selectVoteTarget = function(targetId, elementContainer) {
-    // Remove previous tick markers anywhere on screen
     const oldTick = document.getElementById('voteConfirmTick');
     if (oldTick) oldTick.remove();
 
     selectedVoteTarget = targetId;
 
-    // Append confirmation tick next to the user selection target box
     let confirmBtn = document.createElement('button');
     confirmBtn.id = 'voteConfirmTick';
     confirmBtn.className = 'btn btn-confirm';
     confirmBtn.innerText = '✓';
     confirmBtn.onclick = (e) => {
-        e.stopPropagation(); // Avoid refiring container loops
+        e.stopPropagation();
         window.confirmAndSubmitVote();
     };
 
@@ -374,10 +406,8 @@ window.selectVoteTarget = function(targetId, elementContainer) {
 
 window.confirmAndSubmitVote = function() {
     if (!selectedVoteTarget) return;
-    
     socket.emit('submitVote', { room: currentRoom, targetId: selectedVoteTarget });
     
-    // Clean interactive state assets completely
     document.getElementById('skipVoteBtn').className = 'hidden';
     const oldTick = document.getElementById('voteConfirmTick');
     if (oldTick) oldTick.remove();
@@ -446,5 +476,11 @@ socket.on('gameOverState', (data) => {
     winHeader.style.color = data.winner.toLowerCase().includes('imposter') ? '#ff453a' : '#30d158';
     document.getElementById('winDetails').innerText = data.winner;
     
-    sessionStorage.removeItem('irl_room_code');
+    if (amIHost) {
+        document.getElementById('returnLobbyBtn').classList.remove('hidden');
+        document.getElementById('waitingHostText').classList.add('hidden');
+    } else {
+        document.getElementById('returnLobbyBtn').classList.add('hidden');
+        document.getElementById('waitingHostText').classList.remove('hidden');
+    }
 });
