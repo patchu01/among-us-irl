@@ -45,9 +45,9 @@ io.on('connection', (socket) => {
         
         room.roleConfig = {
             imposters: parseInt(data.config.imposters) || 1,
-            doctors: Math.min(1, parseInt(data.config.doctors) || 0),
-            sheriffs: Math.min(1, parseInt(data.config.sheriffs) || 0),
-            jailors: Math.min(1, parseInt(data.config.jailors) || 0)
+            doctors: parseInt(data.config.doctors) || 0,
+            sheriffs: parseInt(data.config.sheriffs) || 0,
+            jailors: parseInt(data.config.jailors) || 0
         };
         
         io.to(data.room).emit('roleConfigUpdated', room.roleConfig);
@@ -61,11 +61,18 @@ io.on('connection', (socket) => {
         room.tasksCompleted = 0;
         const players = room.players;
         
+        let configuredRoles = [];
+        for (let i = 0; i < room.roleConfig.imposters; i++) configuredRoles.push('imposter');
+        for (let i = 0; i < room.roleConfig.doctors; i++) configuredRoles.push('doctor');
+        for (let i = 0; i < room.roleConfig.sheriffs; i++) configuredRoles.push('sheriff');
+        for (let i = 0; i < room.roleConfig.jailors; i++) configuredRoles.push('jailor');
+
+        configuredRoles.sort(() => Math.random() - 0.5);
+
         let rolePool = [];
-        for (let i = 0; i < room.roleConfig.imposters; i++) rolePool.push('imposter');
-        for (let i = 0; i < room.roleConfig.doctors; i++) rolePool.push('doctor');
-        for (let i = 0; i < room.roleConfig.sheriffs; i++) rolePool.push('sheriff');
-        for (let i = 0; i < room.roleConfig.jailors; i++) rolePool.push('jailor');
+        for (let i = 0; i < Math.min(configuredRoles.length, players.length); i++) {
+            rolePool.push(configuredRoles[i]);
+        }
 
         while (rolePool.length < players.length) {
             rolePool.push('crewmate');
@@ -73,7 +80,7 @@ io.on('connection', (socket) => {
 
         rolePool.sort(() => Math.random() - 0.5);
 
-        const totalCrews = players.length - room.roleConfig.imposters;
+        const totalCrews = room.players.length - room.players.filter(p => p.role === 'imposter').length;
         room.tasksRequired = Math.max(1, totalCrews * 3);
 
         players.forEach((p, idx) => {
@@ -94,7 +101,7 @@ io.on('connection', (socket) => {
         const player = room.players.find(p => p.id === socket.id);
         if (!player || player.role === 'imposter' || player.status === 'dead') return;
 
-        room.tasksCompleted++;
+        room.tasksCompleted += 1;
         io.to(roomCode).emit('tasksUpdated', { completed: room.tasksCompleted, required: room.tasksRequired });
 
         checkWinConditions(roomCode);
@@ -164,20 +171,36 @@ io.on('connection', (socket) => {
         const room = rooms[data.room];
         if (!room || room.state !== 'running') return;
         const target = room.players.find(p => p.id === data.targetId);
-        if (target) {
+        if (target && target.status === 'alive') {
             target.status = 'dead';
             io.to(data.room).emit('updateGame', room.players);
             checkWinConditions(data.room);
         }
     });
 
-    // Reset layout flow cleanly returning to lobby format
+    socket.on('actionSheriffKill', (data) => {
+        const room = rooms[data.room];
+        if (!room || room.state !== 'running') return;
+        
+        const sheriff = room.players.find(p => p.id === socket.id);
+        const target = room.players.find(p => p.id === data.targetId);
+        
+        if (sheriff && target && sheriff.status === 'alive' && target.status === 'alive') {
+            if (target.role === 'imposter') {
+                target.status = 'dead';
+            } else {
+                sheriff.status = 'dead';
+            }
+            io.to(data.room).emit('updateGame', room.players);
+            checkWinConditions(data.room);
+        }
+    });
+
     socket.on('returnToLobby', (roomCode) => {
         const room = rooms[roomCode];
         if (!room || room.hostId !== socket.id) return;
         
         room.state = 'lobby';
-        // Neutralize all active tracking vars
         room.players.forEach(p => { p.status = 'alive'; p.role = 'crewmate'; });
         io.to(roomCode).emit('updateLobby', { roomCode, hostId: room.hostId, players: room.players, config: room.roleConfig });
     });
@@ -215,16 +238,17 @@ function evaluateVotes(roomCode) {
     const room = rooms[roomCode];
     if (!room) return;
 
-    const tally = {};
+    const tally = { 'skip': 0 };
     Object.values(room.votes).forEach(target => {
-        if (target !== 'skip') tally[target] = (tally[target] || 0) + 1;
+        tally[target] = (tally[target] || 0) + 1;
     });
 
-    let ejected = 'Nobody';
-    let maxVotes = 0;
+    let ejected = 'skip';
+    let maxVotes = tally['skip'];
     let tie = false;
 
     for (const id in tally) {
+        if (id === 'skip') continue;
         if (tally[id] > maxVotes) {
             maxVotes = tally[id];
             ejected = id;
@@ -234,13 +258,16 @@ function evaluateVotes(roomCode) {
         }
     }
 
-    let targetPlayer = room.players.find(p => p.id === ejected);
-    // Explicitly flag tie condition
-    if (tie || !targetPlayer) {
+    if (tie || ejected === 'skip') {
         io.to(roomCode).emit('playerEjected', 'Nobody (Tie / Skipped)');
     } else {
-        targetPlayer.status = 'dead';
-        io.to(roomCode).emit('playerEjected', targetPlayer.username);
+        let targetPlayer = room.players.find(p => p.id === ejected);
+        if (targetPlayer) {
+            targetPlayer.status = 'dead';
+            io.to(roomCode).emit('playerEjected', targetPlayer.username);
+        } else {
+            io.to(roomCode).emit('playerEjected', 'Nobody (Skipped)');
+        }
     }
 
     if (!checkWinConditions(roomCode)) {

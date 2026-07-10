@@ -11,7 +11,10 @@ let canTask = true;
 let amIHost = false;
 let meetingPhase = 'gather';
 let selectedVoteTarget = null;
-let privacyOpen = false; // Tracks flip screen state
+let privacyOpen = false;
+
+let sheriffCooldownLeft = 0; 
+let sheriffTimerInterval = null;
 
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
@@ -28,6 +31,40 @@ window.addEventListener('DOMContentLoaded', () => {
         socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
     }
 });
+
+// Clears layout states completely between sessions to fix carry-over UI leakage bugs
+function purgeAllRoleUIElements() {
+    myRole = '';
+    canAct = true;
+    canTask = true;
+    selectedVoteTarget = null;
+    sheriffCooldownLeft = 0;
+
+    clearInterval(cooldownTimer);
+    clearInterval(taskTimer);
+    clearInterval(meetingTimerInterval);
+    clearInterval(sheriffTimerInterval);
+
+    // Hide all specialized submenus explicitly
+    document.getElementById('doctorUI').classList.add('hidden');
+    document.getElementById('jailorUI').classList.add('hidden');
+    document.getElementById('jailorExecuteUI').classList.add('hidden');
+    document.getElementById('taskModuleWrapper').classList.add('hidden');
+    
+    // Wipe dynamic HTML wrappers completely cleanly
+    document.getElementById('roleActionsWrapper').innerHTML = '';
+    document.getElementById('docTargetSelect').innerHTML = '';
+    document.getElementById('jailorTargetSelect').innerHTML = '';
+    document.getElementById('timers').innerText = '';
+    document.getElementById('taskCooldownDisplay').innerText = '';
+    document.getElementById('roleDisplay').innerText = '';
+    
+    // Close privacy screen filter
+    privacyOpen = false;
+    document.getElementById('privacyContainer').classList.add('hidden');
+    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
+    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
+}
 
 window.switchTab = function(tabName) {
     document.getElementById('createTab').classList.add('hidden');
@@ -79,7 +116,6 @@ window.startMeeting = function() {
     document.getElementById('hostMeetingBtn').classList.add('hidden'); 
 };
 
-// Flip Screen Logic Control
 window.togglePrivacy = function() {
     privacyOpen = !privacyOpen;
     const container = document.getElementById('privacyContainer');
@@ -144,8 +180,10 @@ socket.on('roleConfigUpdated', (config) => {
     }
 });
 
-// Resets interface comprehensively (especially when returning from a GameOver state)
 socket.on('updateLobby', (data) => {
+    // Purge elements directly when updating the setup phase layout
+    purgeAllRoleUIElements();
+
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('lobbyScreen').classList.remove('hidden');
     document.getElementById('gameScreen').classList.add('hidden');
@@ -175,15 +213,12 @@ socket.on('updateLobby', (data) => {
 });
 
 socket.on('gameStarted', (data) => {
+    // Structural purge to guarantee a clean starting canvas
+    purgeAllRoleUIElements();
+
     myRole = data.role;
     gamePlayers = data.players;
     
-    // Ensure privacy filter is securely closed before starting
-    privacyOpen = false;
-    document.getElementById('privacyContainer').classList.add('hidden');
-    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
-    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
-
     document.getElementById('lobbyScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
     
@@ -191,22 +226,31 @@ socket.on('gameStarted', (data) => {
     roleEl.innerText = "Role: " + myRole.toUpperCase();
     roleEl.style.color = (myRole === 'imposter') ? '#ff453a' : '#30d158';
     
-    if (myRole !== 'imposter') {
-        document.getElementById('taskBtn').classList.remove('hidden');
+    if (myRole === 'imposter') {
+        document.getElementById('taskModuleWrapper').classList.add('hidden');
     } else {
-        document.getElementById('taskBtn').classList.add('hidden');
+        document.getElementById('taskModuleWrapper').classList.remove('hidden');
+        document.getElementById('taskBtn').classList.remove('btn-disabled');
     }
 
-    startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+    if (myRole === 'sheriff') {
+        sheriffCooldownLeft = 30;
+        startSheriffCooldownLoop();
+    } else {
+        startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+    }
 });
 
 socket.on('tasksUpdated', (data) => {
     const percentage = (data.completed / data.required) * 100;
-    document.getElementById('taskBarFill').style.width = `${percentage}%`;
-    document.getElementById('taskBarText').innerText = `Tasks: ${data.completed} / ${data.required}`;
+    const bar = document.getElementById('taskBarFill');
+    if(bar) bar.style.width = `${percentage}%`;
+    const txt = document.getElementById('taskBarText');
+    if(txt) txt.innerText = `Tasks: ${data.completed} / ${data.required}`;
 });
 
 function startLocalCooldown(seconds) {
+    if (myRole === 'sheriff') return; 
     if (seconds <= 0) {
         canAct = true;
         document.getElementById('timers').innerText = '';
@@ -231,9 +275,40 @@ function startLocalCooldown(seconds) {
     }, 1000);
 }
 
+function startSheriffCooldownLoop() {
+    if (myRole !== 'sheriff') return;
+    
+    if (sheriffCooldownLeft <= 0) {
+        canAct = true;
+        document.getElementById('timers').innerText = '';
+        renderActionPanel();
+        return;
+    }
+    
+    canAct = false;
+    renderActionPanel();
+    document.getElementById('timers').innerText = `SHERIFF COOLDOWN: ${sheriffCooldownLeft}s`;
+    
+    clearInterval(sheriffTimerInterval);
+    sheriffTimerInterval = setInterval(() => {
+        sheriffCooldownLeft--;
+        document.getElementById('timers').innerText = `SHERIFF COOLDOWN: ${sheriffCooldownLeft}s`;
+        
+        if (sheriffCooldownLeft <= 0) {
+            clearInterval(sheriffTimerInterval);
+            canAct = true;
+            document.getElementById('timers').innerText = '';
+            renderActionPanel();
+        }
+    }, 1000);
+}
+
 function renderActionPanel() {
-    const panel = document.getElementById('playersActionList');
-    panel.innerHTML = '';
+    const outerManifestList = document.getElementById('playersActionList');
+    outerManifestList.innerHTML = '';
+    
+    const innerActionWrapper = document.getElementById('roleActionsWrapper');
+    innerActionWrapper.innerHTML = '';
     
     const me = gamePlayers.find(p => p.id === socket.id);
     if (!me) return;
@@ -241,8 +316,8 @@ function renderActionPanel() {
     document.getElementById('meetCount').innerText = me.meetingsLeft;
 
     if (me.status === 'dead') {
-        panel.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (GHOST MODE)</div>';
-        document.getElementById('taskBtn').classList.add('hidden');
+        outerManifestList.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (GHOST MODE)</div>';
+        document.getElementById('taskModuleWrapper').classList.add('hidden');
         document.getElementById('reportBtn').classList.add('hidden');
         document.getElementById('emergencyBtn').classList.add('hidden');
         document.getElementById('doctorUI').classList.add('hidden');
@@ -266,18 +341,28 @@ function renderActionPanel() {
         let card = document.createElement('div');
         card.className = 'player-card';
         card.innerHTML = `<span>${p.username}</span><span style="color:${p.status==='alive'?'#30d158':'#ff453a'};">${p.status.toUpperCase()}</span>`;
-        
+        outerManifestList.appendChild(card);
+
         if (p.id !== socket.id && p.status === 'alive' && canAct) {
             if (myRole === 'imposter') {
                 let btn = document.createElement('button');
                 btn.className = 'btn btn-kill';
-                btn.style.width = 'auto'; btn.style.margin = '0'; btn.style.padding = '8px 12px';
-                btn.innerText = 'Kill';
+                btn.innerText = `Kill ${p.username}`;
                 btn.onclick = () => { socket.emit('actionKill', { room: currentRoom, targetId: p.id }); startLocalCooldown(90); };
-                card.appendChild(btn);
+                innerActionWrapper.appendChild(btn);
+            } else if (myRole === 'sheriff') {
+                let btn = document.createElement('button');
+                btn.className = 'btn btn-kill';
+                btn.style.background = "#0a84ff";
+                btn.innerText = `Execute ${p.username}`;
+                btn.onclick = () => { 
+                    socket.emit('actionSheriffKill', { room: currentRoom, targetId: p.id }); 
+                    sheriffCooldownLeft = 30; 
+                    startSheriffCooldownLoop(); 
+                };
+                innerActionWrapper.appendChild(btn);
             }
         }
-        panel.appendChild(card);
     });
 }
 
@@ -304,8 +389,8 @@ socket.on('meetingCalled', (data) => {
     selectedVoteTarget = null; 
     clearInterval(cooldownTimer);
     clearInterval(meetingTimerInterval);
-    
-    // Automatically close the privacy filter to prevent leaving it open
+    clearInterval(sheriffTimerInterval);
+
     privacyOpen = false;
     document.getElementById('privacyContainer').classList.add('hidden');
     document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
@@ -413,8 +498,10 @@ window.confirmAndSubmitVote = function() {
     if (oldTick) oldTick.remove();
     
     document.querySelectorAll('#voteList button').forEach(btn => {
-        btn.disabled = true;
-        btn.onclick = null; 
+        if(btn.id !== 'voteConfirmTick') {
+            btn.disabled = true;
+            btn.onclick = null;
+        }
     });
 
     if (!document.getElementById('voteStatusNotice')) {
@@ -426,11 +513,14 @@ window.confirmAndSubmitVote = function() {
 };
 
 socket.on('voteCastFeedback', (data) => {
-    const targetBtn = document.getElementById(`vote-btn-${data.voterId}`);
-    if (targetBtn) {
-        targetBtn.innerText = targetBtn.innerText.replace(" (Voted ✓)", "") + " (Voted ✓)";
-        targetBtn.style.background = "#30d158";
-        targetBtn.disabled = true;
+    const targetRow = document.getElementById(`vote-row-${data.voterId}`);
+    if (targetRow && !document.getElementById(`checkmark-${data.voterId}`)) {
+        let check = document.createElement('span');
+        check.id = `checkmark-${data.voterId}`;
+        check.innerText = ' ✅';
+        check.style.marginLeft = '10px';
+        check.style.fontSize = '20px';
+        targetRow.appendChild(check);
     }
 });
 
@@ -452,16 +542,20 @@ socket.on('meetingEnded', (players) => {
     if (me && me.status === 'alive') {
         document.getElementById('reportBtn').classList.remove('hidden');
         document.getElementById('emergencyBtn').classList.remove('hidden');
-        if (myRole !== 'imposter') document.getElementById('taskBtn').classList.remove('hidden');
     }
 
-    startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+    if (myRole === 'sheriff') {
+        startSheriffCooldownLoop();
+    } else {
+        startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+    }
 });
 
 socket.on('gameOverState', (data) => {
     clearInterval(cooldownTimer);
     clearInterval(taskTimer);
     clearInterval(meetingTimerInterval);
+    clearInterval(sheriffTimerInterval);
     
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('lobbyScreen').classList.add('hidden');
