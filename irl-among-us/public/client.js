@@ -1,4 +1,5 @@
-const socket = io({ transports: ['websocket'] });
+const socket = io({ transports: ['websocket', 'polling'] });
+
 let currentRoom = '';
 let myRole = '';
 let gamePlayers = [];
@@ -6,27 +7,32 @@ let cooldownTimer = null;
 let meetingTimerInterval = null;
 let canAct = true;
 let amIHost = false;
-console.log('s ')
 
-// Handle or fetch persistent Device-UUID parameters to survive browser refreshes
+// Handle or fetch persistent Device-UUID parameters
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
 }
 const myUUID = sessionStorage.getItem('irl_user_uuid');
 
-// Auto-recovery hook if page details exist in window storage
-window.addEventListener('load', () => {
+// Auto-recovery hook that waits until the HTML DOM safely loads
+window.addEventListener('DOMContentLoaded', () => {
     const savedRoom = sessionStorage.getItem('irl_room_code');
     const savedUser = sessionStorage.getItem('irl_username');
     if (savedRoom && savedUser) {
-        document.getElementById('createUsername').value = savedUser;
-        document.getElementById('joinUsername').value = savedUser;
-        document.getElementById('joinRoomCode').value = savedRoom;
+        const cUser = document.getElementById('createUsername');
+        const jUser = document.getElementById('joinUsername');
+        const jRoom = document.getElementById('joinRoomCode');
+        
+        if(cUser) cUser.value = savedUser;
+        if(jUser) jUser.value = savedUser;
+        if(jRoom) jRoom.value = savedRoom;
+        
         socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
     }
 });
 
-function switchTab(tabName) {
+// Explicit Window Bindings (Guarantees HTML can always find them)
+window.switchTab = function(tabName) {
     document.getElementById('createTab').classList.add('hidden');
     document.getElementById('joinTab').classList.add('hidden');
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -38,16 +44,16 @@ function switchTab(tabName) {
         document.getElementById('joinTab').classList.remove('hidden');
         document.querySelectorAll('.tab-btn')[1].classList.add('active');
     }
-}
+};
 
-function createRoom() {
+window.createRoom = function() {
     const username = document.getElementById('createUsername').value.trim();
     if (!username) return alert("Enter a username.");
     sessionStorage.setItem('irl_username', username);
     socket.emit('createRoom', { username, uuid: myUUID });
-}
+};
 
-function joinRoom() {
+window.joinRoom = function() {
     const username = document.getElementById('joinUsername').value.trim();
     currentRoom = document.getElementById('joinRoomCode').value.trim();
     if (!username || currentRoom.length !== 6) return alert("Invalid credentials.");
@@ -55,13 +61,17 @@ function joinRoom() {
     sessionStorage.setItem('irl_username', username);
     sessionStorage.setItem('irl_room_code', currentRoom);
     socket.emit('joinLobby', { username, room: currentRoom, uuid: myUUID });
-}
+};
 
-function startGame() { socket.emit('startGame', currentRoom); }
-function reportBody() { socket.emit('reportBody', currentRoom); }
-function callMeeting() { socket.emit('callMeeting', currentRoom); }
-function startMeeting() { socket.emit('startMeeting', currentRoom); document.getElementById('hostMeetingBtn').classList.add('hidden'); }
+window.startGame = function() { socket.emit('startGame', currentRoom); };
+window.reportBody = function() { socket.emit('reportBody', currentRoom); };
+window.callMeeting = function() { socket.emit('callMeeting', currentRoom); };
+window.startMeeting = function() { 
+    socket.emit('startMeeting', currentRoom); 
+    document.getElementById('hostMeetingBtn').classList.add('hidden'); 
+};
 
+// Error Handling
 socket.on('joinError', (err) => {
     sessionStorage.clear();
     alert(err);
@@ -201,33 +211,34 @@ function renderActionPanel() {
     });
 }
 
-function executeDoctorShield() {
+// More global window bindings
+window.executeDoctorShield = function() {
     const val = document.getElementById('docTargetSelect').value;
     if(val) socket.emit('actionShield', { room: currentRoom, targetId: val });
-}
+};
 
-function executeJailorDetain() {
+window.executeJailorDetain = function() {
     if(!canAct) return alert("Jailing ability is on cooldown!");
     const val = document.getElementById('jailorTargetSelect').value;
     if(val) {
         socket.emit('actionJail', { room: currentRoom, targetId: val });
         startLocalCooldown(20);
     }
-}
+};
 
-function executeJailedSuspect() {
+window.executeJailedSuspect = function() {
     const val = document.getElementById('jailorTargetSelect').value;
     if(val) socket.emit('actionExecute', { room: currentRoom, targetId: val });
-}
+};
 
-function adminRoleOverride() {
+window.adminRoleOverride = function() {
     const role = document.getElementById('adminRoleSelect').value;
     socket.emit('adminChangeRole', { room: currentRoom, role });
-}
+};
 
-function adminScenario(scenario) {
+window.adminScenario = function(scenario) {
     socket.emit('adminForceScenario', { room: currentRoom, scenario });
-}
+};
 
 socket.on('updateGame', (players) => {
     gamePlayers = players;
@@ -302,13 +313,13 @@ function renderVotingPanel() {
             btn.className = 'btn btn-alt';
             btn.id = `vote-btn-${p.id}`;
             btn.innerText = p.username;
-            btn.onclick = () => submitVote(p.id);
+            btn.onclick = () => window.submitVote(p.id); // Explicit Window bind
             container.appendChild(btn);
         }
     });
 }
 
-function submitVote(targetId) {
+window.submitVote = function(targetId) {
     socket.emit('submitVote', { room: currentRoom, targetId });
     
     document.getElementById('skipVoteBtn').className = 'hidden';
@@ -325,7 +336,7 @@ function submitVote(targetId) {
         notice.innerText = 'Vote Logged. Waiting for other crew responses...';
         document.getElementById('votingUI').appendChild(notice);
     }
-}
+};
 
 socket.on('voteCastFeedback', (data) => {
     const targetBtn = document.getElementById(`vote-btn-${data.voterId}`);
@@ -356,7 +367,8 @@ socket.on('gameOver', (data) => {
     sessionStorage.removeItem('irl_room_code'); 
     alert(`Scenario Complete! Winners: ${data.winner}`);
     window.location.reload();
-});const socket = io({ transports: ['websocket'] });
+});const socket = io({ transports: ['websocket', 'polling'] });
+
 let currentRoom = '';
 let myRole = '';
 let gamePlayers = [];
@@ -365,25 +377,31 @@ let meetingTimerInterval = null;
 let canAct = true;
 let amIHost = false;
 
-// Handle or fetch persistent Device-UUID parameters to survive browser refreshes
+// Handle or fetch persistent Device-UUID parameters
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
 }
 const myUUID = sessionStorage.getItem('irl_user_uuid');
 
-// Auto-recovery hook if page details exist in window storage
-window.addEventListener('load', () => {
+// Auto-recovery hook that waits until the HTML DOM safely loads
+window.addEventListener('DOMContentLoaded', () => {
     const savedRoom = sessionStorage.getItem('irl_room_code');
     const savedUser = sessionStorage.getItem('irl_username');
     if (savedRoom && savedUser) {
-        document.getElementById('createUsername').value = savedUser;
-        document.getElementById('joinUsername').value = savedUser;
-        document.getElementById('joinRoomCode').value = savedRoom;
+        const cUser = document.getElementById('createUsername');
+        const jUser = document.getElementById('joinUsername');
+        const jRoom = document.getElementById('joinRoomCode');
+        
+        if(cUser) cUser.value = savedUser;
+        if(jUser) jUser.value = savedUser;
+        if(jRoom) jRoom.value = savedRoom;
+        
         socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
     }
 });
 
-function switchTab(tabName) {
+// Explicit Window Bindings (Guarantees HTML can always find them)
+window.switchTab = function(tabName) {
     document.getElementById('createTab').classList.add('hidden');
     document.getElementById('joinTab').classList.add('hidden');
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -395,16 +413,16 @@ function switchTab(tabName) {
         document.getElementById('joinTab').classList.remove('hidden');
         document.querySelectorAll('.tab-btn')[1].classList.add('active');
     }
-}
+};
 
-function createRoom() {
+window.createRoom = function() {
     const username = document.getElementById('createUsername').value.trim();
     if (!username) return alert("Enter a username.");
     sessionStorage.setItem('irl_username', username);
     socket.emit('createRoom', { username, uuid: myUUID });
-}
+};
 
-function joinRoom() {
+window.joinRoom = function() {
     const username = document.getElementById('joinUsername').value.trim();
     currentRoom = document.getElementById('joinRoomCode').value.trim();
     if (!username || currentRoom.length !== 6) return alert("Invalid credentials.");
@@ -412,13 +430,17 @@ function joinRoom() {
     sessionStorage.setItem('irl_username', username);
     sessionStorage.setItem('irl_room_code', currentRoom);
     socket.emit('joinLobby', { username, room: currentRoom, uuid: myUUID });
-}
+};
 
-function startGame() { socket.emit('startGame', currentRoom); }
-function reportBody() { socket.emit('reportBody', currentRoom); }
-function callMeeting() { socket.emit('callMeeting', currentRoom); }
-function startMeeting() { socket.emit('startMeeting', currentRoom); document.getElementById('hostMeetingBtn').classList.add('hidden'); }
+window.startGame = function() { socket.emit('startGame', currentRoom); };
+window.reportBody = function() { socket.emit('reportBody', currentRoom); };
+window.callMeeting = function() { socket.emit('callMeeting', currentRoom); };
+window.startMeeting = function() { 
+    socket.emit('startMeeting', currentRoom); 
+    document.getElementById('hostMeetingBtn').classList.add('hidden'); 
+};
 
+// Error Handling
 socket.on('joinError', (err) => {
     sessionStorage.clear();
     alert(err);
@@ -558,33 +580,34 @@ function renderActionPanel() {
     });
 }
 
-function executeDoctorShield() {
+// More global window bindings
+window.executeDoctorShield = function() {
     const val = document.getElementById('docTargetSelect').value;
     if(val) socket.emit('actionShield', { room: currentRoom, targetId: val });
-}
+};
 
-function executeJailorDetain() {
+window.executeJailorDetain = function() {
     if(!canAct) return alert("Jailing ability is on cooldown!");
     const val = document.getElementById('jailorTargetSelect').value;
     if(val) {
         socket.emit('actionJail', { room: currentRoom, targetId: val });
         startLocalCooldown(20);
     }
-}
+};
 
-function executeJailedSuspect() {
+window.executeJailedSuspect = function() {
     const val = document.getElementById('jailorTargetSelect').value;
     if(val) socket.emit('actionExecute', { room: currentRoom, targetId: val });
-}
+};
 
-function adminRoleOverride() {
+window.adminRoleOverride = function() {
     const role = document.getElementById('adminRoleSelect').value;
     socket.emit('adminChangeRole', { room: currentRoom, role });
-}
+};
 
-function adminScenario(scenario) {
+window.adminScenario = function(scenario) {
     socket.emit('adminForceScenario', { room: currentRoom, scenario });
-}
+};
 
 socket.on('updateGame', (players) => {
     gamePlayers = players;
@@ -659,13 +682,13 @@ function renderVotingPanel() {
             btn.className = 'btn btn-alt';
             btn.id = `vote-btn-${p.id}`;
             btn.innerText = p.username;
-            btn.onclick = () => submitVote(p.id);
+            btn.onclick = () => window.submitVote(p.id); // Explicit Window bind
             container.appendChild(btn);
         }
     });
 }
 
-function submitVote(targetId) {
+window.submitVote = function(targetId) {
     socket.emit('submitVote', { room: currentRoom, targetId });
     
     document.getElementById('skipVoteBtn').className = 'hidden';
@@ -682,7 +705,7 @@ function submitVote(targetId) {
         notice.innerText = 'Vote Logged. Waiting for other crew responses...';
         document.getElementById('votingUI').appendChild(notice);
     }
-}
+};
 
 socket.on('voteCastFeedback', (data) => {
     const targetBtn = document.getElementById(`vote-btn-${data.voterId}`);

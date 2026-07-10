@@ -30,24 +30,24 @@
     <div id="loginScreen">
         <h1>IRL Game Setup</h1>
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('create')">Create</button>
-            <button class="tab-btn" onclick="switchTab('join')">Join</button>
+            <button class="tab-btn active" onclick="window.switchTab('create')">Create</button>
+            <button class="tab-btn" onclick="window.switchTab('join')">Join</button>
         </div>
         <div id="createTab" class="tab-content">
             <input type="text" id="createUsername" placeholder="Username" autocomplete="off">
-            <button class="btn" onclick="createRoom()">Create New Game</button>
+            <button class="btn" onclick="window.createRoom()">Create New Game</button>
         </div>
         <div id="joinTab" class="tab-content hidden">
             <input type="text" id="joinUsername" placeholder="Username" autocomplete="off">
             <input type="number" id="joinRoomCode" placeholder="6-Digit Room Code" autocomplete="off">
-            <button class="btn btn-alt" onclick="joinRoom()">Join Game</button>
+            <button class="btn btn-alt" onclick="window.joinRoom()">Join Game</button>
         </div>
     </div>
 
     <div id="lobbyScreen" class="hidden">
         <div id="roomHeader">ROOM: <span id="lobbyRoomCodeDisplay">----</span></div>
         <div id="playerList"></div>
-        <button class="btn hidden" id="startBtn" onclick="startGame()">Start Game</button>
+        <button class="btn hidden" id="startBtn" onclick="window.startGame()">Start Game</button>
     </div>
 
     <div id="gameScreen" class="hidden">
@@ -58,31 +58,31 @@
         <div id="adminPanel" class="panel-box hidden">
             <h3>Admin141211 Override Sandbox</h3>
             <label>Swap Role Live:</label>
-            <select id="adminRoleSelect" onchange="adminRoleOverride()">
+            <select id="adminRoleSelect" onchange="window.adminRoleOverride()">
                 <option value="crewmate">Crewmate</option>
                 <option value="imposter">Imposter</option>
                 <option value="doctor">Doctor</option>
                 <option value="sheriff">Sheriff</option>
                 <option value="jailor">Jailor</option>
             </select>
-            <button class="btn btn-alt" style="padding:10px; margin:5px 0;" onclick="adminScenario('force_meeting')">Force Assembly State</button>
-            <button class="btn" style="padding:10px; margin:5px 0; background:#30d158;" onclick="adminScenario('crew_win')">Simulate Crew Win</button>
-            <button class="btn btn-kill" style="padding:10px; margin:5px 0;" onclick="adminScenario('imp_win')">Simulate Imposter Win</button>
+            <button class="btn btn-alt" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('force_meeting')">Force Assembly State</button>
+            <button class="btn" style="padding:10px; margin:5px 0; background:#30d158;" onclick="window.adminScenario('crew_win')">Simulate Crew Win</button>
+            <button class="btn btn-kill" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('imp_win')">Simulate Imposter Win</button>
         </div>
 
-        <button class="btn" id="reportBtn" onclick="reportBody()">🚨 Report Body</button>
-        <button class="btn btn-alt" id="emergencyBtn" onclick="callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
+        <button class="btn" id="reportBtn" onclick="window.reportBody()">🚨 Report Body</button>
+        <button class="btn btn-alt" id="emergencyBtn" onclick="window.callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
 
         <div id="doctorUI" class="panel-box hidden">
             <h3>Doctor Field Terminal</h3>
             <label>Select Patient to Shield:</label>
-            <select id="docTargetSelect" onchange="executeDoctorShield()"></select>
+            <select id="docTargetSelect" onchange="window.executeDoctorShield()"></select>
         </div>
 
         <div id="jailorUI" class="panel-box hidden">
             <h3>Jailor Isolation Terminal</h3>
             <label>Select Suspect to Detain (20s CD):</label>
-            <select id="jailorTargetSelect" onchange="executeJailorDetain()"></select>
+            <select id="jailorTargetSelect" onchange="window.executeJailorDetain()"></select>
         </div>
 
         <h3>Active Track Manifest</h3>
@@ -96,20 +96,137 @@
         
         <div id="meetingTimer">00s</div>
         
-        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="startMeeting()">Host: Begin Discussion</button>
+        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="window.startMeeting()">Host: Begin Discussion</button>
         
         <div id="jailorExecuteUI" class="panel-box hidden">
             <h3 style="color:#ff453a;">Jailor Martial Execution Terminal</h3>
-            <button class="btn btn-kill" id="jailExecuteBtn" onclick="executeJailedSuspect()">Terminate Current Prisoner</button>
+            <button class="btn btn-kill" id="jailExecuteBtn" onclick="window.executeJailedSuspect()">Terminate Current Prisoner</button>
         </div>
 
         <div id="votingUI" class="hidden">
             <h3>Cast Registry Vote:</h3>
             <div id="voteList"></div>
-            <button class="btn btn-alt" id="skipVoteBtn" onclick="submitVote('skip')">Skip Registration</button>
+            <button class="btn btn-alt" id="skipVoteBtn" onclick="window.submitVote('skip')">Skip Registration</button>
         </div>
     </div>
 
+    <!-- Ensure these load at the very bottom in this exact order -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>IRL Among Us</title>
+    <style>
+        body { background: #121212; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; margin: 0; padding: 20px; user-select: none; }
+        .hidden { display: none !important; }
+        h1 { color: #ff3b30; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; }
+        .tabs { display: flex; justify-content: center; margin-bottom: 20px; background: #1e1e1e; border-radius: 10px; overflow: hidden; }
+        .tab-btn { flex: 1; padding: 15px; background: transparent; color: #8e8e93; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #333; color: white; }
+        input, select { width: 100%; box-sizing: border-box; padding: 15px; margin: 10px 0; border-radius: 8px; border: 2px solid #333; font-size: 16px; background: #1e1e1e; color: white; }
+        .btn { display: block; width: 100%; box-sizing: border-box; padding: 16px; margin: 15px 0; cursor: pointer; background: #ff3b30; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; text-transform: uppercase; }
+        .btn-alt { background: #0a84ff; }
+        .btn-kill { background: #ff453a; }
+        .btn-disabled { background: #2c2c2e !important; color: #8e8e93; cursor: not-allowed; }
+        .player-card { border: 1px solid #2c2c2e; padding: 14px; margin: 10px 0; border-radius: 12px; background: #1c1c1e; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        #roomHeader { font-size: 24px; color: #ff9f0a; font-weight: bold; margin-bottom: 15px; letter-spacing: 3px; }
+        #systemMessages { color: #ffd60a; font-weight: bold; margin: 15px 0; min-height: 20px; }
+        #timers { font-size: 26px; font-weight: bold; color: #ff9f0a; margin: 10px 0; }
+        .panel-box { background: #1c1c1e; padding: 15px; border-radius: 12px; margin: 15px 0; border: 1px solid #3a3a3c; text-align: left; }
+        .panel-box h3 { margin-top: 0; color: #ff9f0a; }
+        #meetingTimer { font-size: 32px; font-weight: bold; color: #ff453a; background: #1c1c1e; padding: 10px; border-radius: 8px; border: 1px solid #3a3a3c; display: inline-block; margin: 15px 0; min-width: 120px; }
+        .alert-banner { background: #ff9f0a; color: black; font-weight: bold; padding: 15px; border-radius: 10px; margin: 15px 0; font-size: 18px; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+    <div id="loginScreen">
+        <h1>IRL Game Setup</h1>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="window.switchTab('create')">Create</button>
+            <button class="tab-btn" onclick="window.switchTab('join')">Join</button>
+        </div>
+        <div id="createTab" class="tab-content">
+            <input type="text" id="createUsername" placeholder="Username" autocomplete="off">
+            <button class="btn" onclick="window.createRoom()">Create New Game</button>
+        </div>
+        <div id="joinTab" class="tab-content hidden">
+            <input type="text" id="joinUsername" placeholder="Username" autocomplete="off">
+            <input type="number" id="joinRoomCode" placeholder="6-Digit Room Code" autocomplete="off">
+            <button class="btn btn-alt" onclick="window.joinRoom()">Join Game</button>
+        </div>
+    </div>
+
+    <div id="lobbyScreen" class="hidden">
+        <div id="roomHeader">ROOM: <span id="lobbyRoomCodeDisplay">----</span></div>
+        <div id="playerList"></div>
+        <button class="btn hidden" id="startBtn" onclick="window.startGame()">Start Game</button>
+    </div>
+
+    <div id="gameScreen" class="hidden">
+        <h2 id="roleDisplay"></h2>
+        <div id="timers"></div>
+        <div id="systemMessages"></div>
+
+        <div id="adminPanel" class="panel-box hidden">
+            <h3>Admin141211 Override Sandbox</h3>
+            <label>Swap Role Live:</label>
+            <select id="adminRoleSelect" onchange="window.adminRoleOverride()">
+                <option value="crewmate">Crewmate</option>
+                <option value="imposter">Imposter</option>
+                <option value="doctor">Doctor</option>
+                <option value="sheriff">Sheriff</option>
+                <option value="jailor">Jailor</option>
+            </select>
+            <button class="btn btn-alt" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('force_meeting')">Force Assembly State</button>
+            <button class="btn" style="padding:10px; margin:5px 0; background:#30d158;" onclick="window.adminScenario('crew_win')">Simulate Crew Win</button>
+            <button class="btn btn-kill" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('imp_win')">Simulate Imposter Win</button>
+        </div>
+
+        <button class="btn" id="reportBtn" onclick="window.reportBody()">🚨 Report Body</button>
+        <button class="btn btn-alt" id="emergencyBtn" onclick="window.callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
+
+        <div id="doctorUI" class="panel-box hidden">
+            <h3>Doctor Field Terminal</h3>
+            <label>Select Patient to Shield:</label>
+            <select id="docTargetSelect" onchange="window.executeDoctorShield()"></select>
+        </div>
+
+        <div id="jailorUI" class="panel-box hidden">
+            <h3>Jailor Isolation Terminal</h3>
+            <label>Select Suspect to Detain (20s CD):</label>
+            <select id="jailorTargetSelect" onchange="window.executeJailorDetain()"></select>
+        </div>
+
+        <h3>Active Track Manifest</h3>
+        <div id="playersActionList"></div>
+    </div>
+
+    <div id="meetingScreen" class="hidden">
+        <h2 id="meetingStatus">Assembly Triggered</h2>
+        
+        <div id="gatherPrompt" class="alert-banner">🏃 Head to the designated meeting room location now!</div>
+        
+        <div id="meetingTimer">00s</div>
+        
+        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="window.startMeeting()">Host: Begin Discussion</button>
+        
+        <div id="jailorExecuteUI" class="panel-box hidden">
+            <h3 style="color:#ff453a;">Jailor Martial Execution Terminal</h3>
+            <button class="btn btn-kill" id="jailExecuteBtn" onclick="window.executeJailedSuspect()">Terminate Current Prisoner</button>
+        </div>
+
+        <div id="votingUI" class="hidden">
+            <h3>Cast Registry Vote:</h3>
+            <div id="voteList"></div>
+            <button class="btn btn-alt" id="skipVoteBtn" onclick="window.submitVote('skip')">Skip Registration</button>
+        </div>
+    </div>
+
+    <!-- Ensure these load at the very bottom in this exact order -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="client.js"></script>
 </body>
