@@ -15,7 +15,6 @@
         .btn { display: block; width: 100%; box-sizing: border-box; padding: 16px; margin: 15px 0; cursor: pointer; background: #ff3b30; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; text-transform: uppercase; }
         .btn-alt { background: #0a84ff; }
         .btn-kill { background: #ff453a; }
-        .btn-disabled { background: #2c2c2e !important; color: #8e8e93; cursor: not-allowed; }
         .player-card { border: 1px solid #2c2c2e; padding: 14px; margin: 10px 0; border-radius: 12px; background: #1c1c1e; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
         #roomHeader { font-size: 24px; color: #ff9f0a; font-weight: bold; margin-bottom: 15px; letter-spacing: 3px; }
         #systemMessages { color: #ffd60a; font-weight: bold; margin: 15px 0; min-height: 20px; }
@@ -24,6 +23,8 @@
         .panel-box h3 { margin-top: 0; color: #ff9f0a; }
         #meetingTimer { font-size: 32px; font-weight: bold; color: #ff453a; background: #1c1c1e; padding: 10px; border-radius: 8px; border: 1px solid #3a3a3c; display: inline-block; margin: 15px 0; min-width: 120px; }
         .alert-banner { background: #ff9f0a; color: black; font-weight: bold; padding: 15px; border-radius: 10px; margin: 15px 0; font-size: 18px; text-transform: uppercase; }
+        .role-counter { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+        .role-counter select { width: 80px; padding: 8px; margin: 0; }
     </style>
 </head>
 <body>
@@ -46,7 +47,37 @@
 
     <div id="lobbyScreen" class="hidden">
         <div id="roomHeader">ROOM: <span id="lobbyRoomCodeDisplay">----</span></div>
+        <h3>Manifest Roster</h3>
         <div id="playerList"></div>
+
+        <div id="hostSettingsPanel" class="panel-box">
+            <h3>Game Parameters Options</h3>
+            <div class="role-counter">
+                <span>Imposters Count:</span>
+                <select id="cfgImposters" onchange="window.pushRoleConfig()">
+                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                </select>
+            </div>
+            <div class="role-counter">
+                <span>Doctor Allowance (Max 1):</span>
+                <select id="cfgDoctors" onchange="window.pushRoleConfig()">
+                    <option value="0">0</option><option value="1">1</option>
+                </select>
+            </div>
+            <div class="role-counter">
+                <span>Sheriff Allowance (Max 1):</span>
+                <select id="cfgSheriffs" onchange="window.pushRoleConfig()">
+                    <option value="0">0</option><option value="1">1</option>
+                </select>
+            </div>
+            <div class="role-counter">
+                <span>Jailor Allowance (Max 1):</span>
+                <select id="cfgJailors" onchange="window.pushRoleConfig()">
+                    <option value="0">0</option><option value="1">1</option>
+                </select>
+            </div>
+        </div>
+
         <button class="btn hidden" id="startBtn" onclick="window.startGame()">Start Game</button>
     </div>
 
@@ -66,8 +97,6 @@
                 <option value="jailor">Jailor</option>
             </select>
             <button class="btn btn-alt" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('force_meeting')">Force Assembly State</button>
-            <button class="btn" style="padding:10px; margin:5px 0; background:#30d158;" onclick="window.adminScenario('crew_win')">Simulate Crew Win</button>
-            <button class="btn btn-kill" style="padding:10px; margin:5px 0;" onclick="window.adminScenario('imp_win')">Simulate Imposter Win</button>
         </div>
 
         <button class="btn" id="reportBtn" onclick="window.reportBody()">🚨 Report Body</button>
@@ -91,9 +120,7 @@
 
     <div id="meetingScreen" class="hidden">
         <h2 id="meetingStatus">Assembly Triggered</h2>
-        
         <div id="gatherPrompt" class="alert-banner">🏃 Head to the designated meeting room location now!</div>
-        
         <div id="meetingTimer">00s</div>
         
         <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="window.startMeeting()">Host: Begin Discussion</button>
@@ -110,7 +137,6 @@
         </div>
     </div>
 
-    <!-- Ensure these load at the very bottom in this exact order -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="client.js"></script>
 </body>
