@@ -24,7 +24,7 @@ io.on('connection', (socket) => {
             timer: null,
             tasksCompleted: 0,
             tasksRequired: 0,
-            // FIX: Defaults now strictly match the client-side UI to prevent unselected roles
+            jailedPlayer: null, 
             roleConfig: { imposters: 1, doctors: 0, sheriffs: 0, jailors: 0 }
         };
         
@@ -60,9 +60,9 @@ io.on('connection', (socket) => {
 
         room.state = 'running';
         room.tasksCompleted = 0;
+        room.jailedPlayer = null; 
         const players = room.players;
         
-        // FIX: Prioritize imposters first, then fill optional roles, strictly enforcing counts
         let configuredRoles = [];
         for (let i = 0; i < room.roleConfig.imposters; i++) configuredRoles.push('imposter');
         
@@ -71,7 +71,6 @@ io.on('connection', (socket) => {
         for (let i = 0; i < room.roleConfig.sheriffs; i++) optionalRoles.push('sheriff');
         for (let i = 0; i < room.roleConfig.jailors; i++) optionalRoles.push('jailor');
 
-        // Shuffle optional roles so they compete fairly if player count is lower than config
         optionalRoles.sort(() => Math.random() - 0.5);
         configuredRoles = configuredRoles.concat(optionalRoles);
 
@@ -80,12 +79,10 @@ io.on('connection', (socket) => {
             rolePool.push(configuredRoles[i]);
         }
 
-        // Fill remaining slots with crewmates
         while (rolePool.length < players.length) {
             rolePool.push('crewmate');
         }
 
-        // Final shuffle layout assignment
         rolePool.sort(() => Math.random() - 0.5);
 
         const totalCrews = room.players.length - room.players.filter(p => p.role === 'imposter').length;
@@ -95,7 +92,19 @@ io.on('connection', (socket) => {
             p.role = rolePool[idx];
             p.status = 'alive';
             p.meetingsLeft = 1;
-            io.to(p.id).emit('gameStarted', { role: p.role, players, tasksRequired: room.tasksRequired });
+            
+            if (p.role === 'jailor') {
+                p.jailorExecutions = 2;
+            } else {
+                p.jailorExecutions = 0;
+            }
+
+            io.to(p.id).emit('gameStarted', { 
+                role: p.role, 
+                players, 
+                tasksRequired: room.tasksRequired,
+                jailorExecutions: p.jailorExecutions 
+            });
         });
 
         io.to(roomCode).emit('updateGame', players);
@@ -206,6 +215,53 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('actionJail', (data) => {
+        const room = rooms[data.room];
+        if (!room || room.state !== 'running') return;
+        
+        const jailor = room.players.find(p => p.id === socket.id);
+        const target = room.players.find(p => p.id === data.targetId);
+        
+        if (jailor && target && jailor.role === 'jailor' && jailor.status === 'alive' && target.status === 'alive') {
+            room.jailedPlayer = target.id;
+            
+            io.to(target.id).emit('playerJailed', { message: 'You have been jailed by the Jailor!' });
+            io.to(jailor.id).emit('actionFeedback', { message: `You have successfully jailed ${target.username}.` });
+        }
+    });
+
+    socket.on('actionJailorExecute', (data) => {
+        const room = rooms[data.room];
+        if (!room || room.state !== 'meeting_discuss') return;
+
+        const jailor = room.players.find(p => p.id === socket.id);
+        if (!jailor || jailor.role !== 'jailor' || jailor.status !== 'alive') return;
+
+        if (jailor.jailorExecutions <= 0) {
+            return io.to(jailor.id).emit('actionFeedback', { message: 'You have no executions left.' });
+        }
+        
+        if (!room.jailedPlayer) {
+            return io.to(jailor.id).emit('actionFeedback', { message: 'No one was jailed this round.' });
+        }
+
+        const target = room.players.find(p => p.id === room.jailedPlayer);
+        if (target && target.status === 'alive') {
+            target.status = 'dead';
+            jailor.jailorExecutions -= 1; 
+
+            if (target.role !== 'imposter') {
+                jailor.jailorExecutions = 0;
+            }
+
+            io.to(data.room).emit('updateGame', room.players);
+            io.to(target.id).emit('playerJailed', { message: 'You were executed by the Jailor!' });
+            io.to(jailor.id).emit('actionFeedback', { message: `You executed ${target.username}. Executions left: ${jailor.jailorExecutions}` });
+
+            checkWinConditions(data.room);
+        }
+    });
+
     socket.on('returnToLobby', (roomCode) => {
         const room = rooms[roomCode];
         if (!room || room.hostId !== socket.id) return;
@@ -280,6 +336,8 @@ function evaluateVotes(roomCode) {
         }
     }
 
+    room.jailedPlayer = null;
+
     if (!checkWinConditions(roomCode)) {
         room.state = 'running';
         io.to(roomCode).emit('meetingEnded', room.players);
@@ -302,17 +360,14 @@ function checkWinConditions(roomCode) {
         return true;
     }
 
-    // FIX: Aaa testing override conditional check
     const isTestingOverride = room.players.some(p => p.username === 'Aaa');
 
     if (isTestingOverride) {
-        // If "Aaa" is present, Imposters must actually kill the final crewmate to win (Testing Rules)
         if (aliveNonImposters === 0) {
             triggerGameOver(roomCode, 'Imposters (Crew Eliminated!)');
             return true;
         }
     } else {
-        // Standard Rules: Imposters win immediately upon matching or exceeding living crew counts
         if (aliveImposters >= aliveNonImposters) {
             triggerGameOver(roomCode, 'Imposters (Crew Overrun!)');
             return true;

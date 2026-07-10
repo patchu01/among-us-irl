@@ -2,157 +2,82 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>IRL Among Us</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Space Party Game</title>
     <style>
-        body { background: #121212; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; margin: 0; padding: 20px; user-select: none; }
-        .hidden { display: none !important; }
-        h1 { color: #ff3b30; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px; }
-        .tabs { display: flex; justify-content: center; margin-bottom: 20px; background: #1e1e1e; border-radius: 10px; overflow: hidden; }
-        .tab-btn { flex: 1; padding: 15px; background: transparent; color: #8e8e93; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
-        .tab-btn.active { background: #333; color: white; }
-        input, select { width: 100%; box-sizing: border-box; padding: 15px; margin: 10px 0; border-radius: 8px; border: 2px solid #333; font-size: 16px; background: #1e1e1e; color: white; }
-        .btn { display: block; width: 100%; box-sizing: border-box; padding: 16px; margin: 15px 0; cursor: pointer; background: #ff3b30; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; text-transform: uppercase; transition: background 0.2s; }
-        .btn-alt { background: #0a84ff; }
-        .btn-kill { background: #ff453a; }
-        .btn-task { background: #30d158; color: white; }
-        .btn-disabled { background: #2c2c2e !important; color: #8e8e93; cursor: not-allowed; }
-        .btn-confirm { background: #30d158 !important; color: white !important; width: auto !important; display: inline-block !important; margin-left: 10px !important; padding: 10px 15px !important; border-radius: 8px !important; }
-        .player-card { border: 1px solid #2c2c2e; padding: 14px; margin: 10px 0; border-radius: 12px; background: #1c1c1e; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
-        #roomHeader { font-size: 24px; color: #ff9f0a; font-weight: bold; margin-bottom: 15px; letter-spacing: 3px; }
-        #systemMessages { color: #ffd60a; font-weight: bold; margin: 15px 0; min-height: 20px; }
-        #timers { font-size: 26px; font-weight: bold; color: #ff9f0a; margin: 10px 0; }
-        .panel-box { background: #1c1c1e; padding: 15px; border-radius: 12px; margin: 15px 0; border: 1px solid #3a3a3c; text-align: left; }
-        .panel-box h3 { margin-top: 0; color: #ff9f0a; }
-        #meetingTimer { font-size: 32px; font-weight: bold; color: #ff453a; background: #1c1c1e; padding: 10px; border-radius: 8px; border: 1px solid #3a3a3c; display: inline-block; margin: 15px 0; min-width: 120px; }
-        .alert-banner { background: #ff9f0a; color: black; font-weight: bold; padding: 15px; border-radius: 10px; margin: 15px 0; font-size: 18px; text-transform: uppercase; }
-        .role-counter { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
-        .role-counter select { width: 80px; padding: 8px; margin: 0; }
-        .task-bar-container { background: #2c2c2e; border-radius: 8px; height: 24px; margin: 15px 0; overflow: hidden; position: relative; border: 1px solid #3a3a3c; }
-        .task-bar-fill { background: #30d158; height: 100%; width: 0%; transition: width 0.4s ease; }
-        .task-bar-text { position: absolute; top: 0; width: 100%; text-align: center; font-size: 14px; font-weight: bold; line-height: 24px; color: white; }
-        .win-banner { font-size: 36px; text-transform: uppercase; font-weight: 900; margin-top: 40px; }
-        #privacyContainer { background: #1c1c1e; border: 2px dashed #444; border-radius: 14px; padding: 20px; margin: 15px 0; text-align: left; }
+        body { font-family: sans-serif; background: #0f172a; color: #f8fafc; margin: 20px; transition: border 0.2s ease; }
+        .screen { display: none; }
+        .active { display: block; }
+        button { padding: 8px 14px; margin: 4px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; }
+        input, select { padding: 8px; margin: 4px; border-radius: 4px; border: 1px solid #475569; background: #1e293b; color: white; }
+        .player-item { padding: 10px; margin: 6px 0; background: #1e293b; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .player-item.dead { opacity: 0.5; text-decoration: line-through; }
+        .btn-kill { background: #ef4444; color: white; }
+        .btn-sheriff { background: #3b82f6; color: white; }
+        .btn-jail { background: #64748b; color: white; }
+        .btn-execute { background: #dc2626; color: white; animation: pulse 1.5s infinite; }
+        .btn-vote { background: #10b981; color: white; }
+        #gameLog { background: #020617; padding: 10px; border-radius: 6px; height: 150px; overflow-y: auto; border: 1px solid #334155; margin-top: 20px; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
-    <div id="loginScreen">
-        <h1>IRL Game Setup</h1>
-        <div class="tabs">
-            <button class="tab-btn active" onclick="window.switchTab('create')">Create</button>
-            <button class="tab-btn" onclick="window.switchTab('join')">Join</button>
-        </div>
-        <div id="createTab" class="tab-content">
-            <input type="text" id="createUsername" placeholder="Username" autocomplete="off">
-            <button class="btn" onclick="window.createRoom()">Create New Game</button>
-        </div>
-        <div id="joinTab" class="tab-content hidden">
-            <input type="text" id="joinUsername" placeholder="Username" autocomplete="off">
-            <input type="number" id="joinRoomCode" placeholder="6-Digit Room Code" autocomplete="off">
-            <button class="btn btn-alt" onclick="window.joinRoom()">Join Game</button>
+
+    <div id="authScreen" class="screen active">
+        <h2>Enter Galactic Arena</h2>
+        <input type="text" id="usernameInput" placeholder="Enter Username..."><br>
+        <button onclick="createRoom()" style="background: #3b82f6; color: white;">Create Game Lobby</button>
+        <hr style="border-color: #334155;">
+        <input type="text" id="roomCodeInput" placeholder="Enter 6-Digit Room Code..."><br>
+        <button onclick="joinRoom()" style="background: #10b981; color: white;">Join Existing Game</button>
+    </div>
+
+    <div id="lobbyScreen" class="screen">
+        <h2 id="roomDisplay">Room: ------</h2>
+        <h3>Players Logged In:</h3>
+        <ul id="playerList"></ul>
+
+        <div id="hostControls" style="display: none;">
+            <h3>Role Options Assignment:</h3>
+            <label>Imposters: </label>
+            <select id="imposterSelect" onchange="sendConfigUpdate()">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select><br>
+            <label>Doctors: </label>
+            <select id="doctorSelect" onchange="sendConfigUpdate()">
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+            </select><br>
+            <label>Sheriffs: </label>
+            <select id="sheriffSelect" onchange="sendConfigUpdate()">
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+            </select><br>
+            <label>Jailors: </label>
+            <select id="jailorSelect" onchange="sendConfigUpdate()">
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+            </select><br><br>
+            <button onclick="startGame()" style="background: #10b981; color: white; width: 100%;">Launch Simulation</button>
         </div>
     </div>
 
-    <div id="lobbyScreen" class="hidden">
-        <div id="roomHeader">ROOM: <span id="lobbyRoomCodeDisplay">----</span></div>
-        <h3>Manifest Roster</h3>
-        <div id="playerList"></div>
+    <div id="gameScreen" class="screen">
+        <h2 id="roleDisplay">Your Role: Unknown</h2>
+        <h3 id="taskProgress">Tasks completed: 0 / 0</h3>
+        
+        <button onclick="logTask()" style="background: #f59e0b; color: black;">Complete Assigned Task</button>
+        <button onclick="callMeeting()" style="background: #3b82f6; color: white;">Emergency Assembly</button>
+        <button onclick="reportBody()" style="background: #ef4444; color: white;">Report Fallen Comrade</button>
 
-        <div id="hostSettingsPanel" class="panel-box">
-            <h3>Game Parameters Options</h3>
-            <div class="role-counter">
-                <span>Imposters Count:</span>
-                <select id="cfgImposters" onchange="window.pushRoleConfig()">
-                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                </select>
-            </div>
-            <div class="role-counter">
-                <span>Doctor Allowance:</span>
-                <select id="cfgDoctors" onchange="window.pushRoleConfig()">
-                    <option value="0">0</option><option value="1">1</option><option value="2">2</option>
-                </select>
-            </div>
-            <div class="role-counter">
-                <span>Sheriff Allowance:</span>
-                <select id="cfgSheriffs" onchange="window.pushRoleConfig()">
-                    <option value="0">0</option><option value="1">1</option><option value="2">2</option>
-                </select>
-            </div>
-            <div class="role-counter">
-                <span>Jailor Allowance:</span>
-                <select id="cfgJailors" onchange="window.pushRoleConfig()">
-                    <option value="0">0</option><option value="1">1</option><option value="2">2</option>
-                </select>
-            </div>
+        <div id="meetingControls" style="display: none; background: #1e293b; padding: 10px; margin: 15px 0; border-radius: 6px; border: 1px dashed #ef4444;">
+            <h4 style="margin: 5px 0; color: #ef4444;">Assembly Council Active</h4>
+            <button onclick="hostStartMeeting()" style="background: #8b5cf6; color: white;">Host: Begin Deliberation Phase</button>
+            <button onclick="castVote('skip')" style="background: #64748b; color: white;">Skip Collective Voting</button>
         </div>
 
-        <button class="btn hidden" id="startBtn" onclick="window.startGame()">Start Game</button>
-    </div>
+        <h3>Active Roster Area:</h3>
+        <div id="gamePlayers"></div>
 
-    <div id="gameScreen" class="hidden">
-        <button class="btn btn-alt" id="togglePrivacyBtn" onclick="window.togglePrivacy()">👀 Reveal Privacy Screen</button>
-        
-        <div id="privacyContainer" class="hidden">
-            <h2 id="roleDisplay" style="margin-top: 0;"></h2>
-            
-            <div id="taskModuleWrapper">
-                <div class="task-bar-container">
-                    <div id="taskBarFill" class="task-bar-fill"></div>
-                    <div id="taskBarText" class="task-bar-text">Tasks: 0 / 0</div>
-                </div>
-                <button class="btn btn-task" id="taskBtn" onclick="window.submitTaskDone()">✅ Log Task Done</button>
-                <div id="taskCooldownDisplay" style="color:#30d158; font-weight:bold; margin: 5px 0;"></div>
-            </div>
-
-            <div id="doctorUI" class="panel-box hidden">
-                <h3>Doctor Field Terminal</h3>
-                <label>Select Patient to Shield:</label>
-                <select id="docTargetSelect" onchange="window.executeDoctorShield()"></select>
-            </div>
-
-            <div id="jailorUI" class="panel-box hidden">
-                <h3>Jailor Isolation Terminal</h3>
-                <label>Select Suspect to Detain (20s CD):</label>
-                <select id="jailorTargetSelect" onchange="window.executeJailorDetain()"></select>
-            </div>
-            
-            <div id="timers" style="margin-top:15px;"></div>
-            <div id="roleActionsWrapper" style="margin-top: 15px;"></div>
-        </div>
-
-        <div id="systemMessages"></div>
-        <button class="btn" id="reportBtn" onclick="window.reportBody()">🚨 Report Body</button>
-        <button class="btn btn-alt" id="emergencyBtn" onclick="window.callMeeting()">📣 Emergency Meeting (<span id="meetCount">1</span>)</button>
-
-        <h3>Active Track Manifest</h3>
-        <div id="playersActionList"></div>
-    </div>
-
-    <div id="meetingScreen" class="hidden">
-        <h2 id="meetingStatus">Assembly Triggered</h2>
-        <div id="gatherPrompt" class="alert-banner">🏃 Head to the designated meeting room location now!</div>
-        <div id="meetingTimer">00s</div>
-        
-        <button class="btn hidden" id="hostMeetingBtn" style="background:#5856d6;" onclick="window.startMeeting()">Host: Begin Discussion</button>
-        
-        <div id="jailorExecuteUI" class="panel-box hidden">
-            <h3 style="color:#ff453a;">Jailor Martial Execution Terminal</h3>
-            <button class="btn btn-kill" id="jailExecuteBtn" onclick="window.executeJailedSuspect()">Terminate Current Prisoner</button>
-        </div>
-
-        <div id="votingUI" class="hidden">
-            <h3>Cast Registry Vote:</h3>
-            <div id="voteList"></div>
-            <button class="btn btn-alt" id="skipVoteBtn" onclick="window.submitVote('skip')">Skip Registration</button>
-        </div>
-    </div>
-
-    <div id="gameOverScreen" class="hidden">
-        <h1 class="win-banner" id="winHeader">VICTORY</h1>
-        <h3 id="winDetails" style="color: #8e8e93;">Summary Reason</h3>
-        
-        <button class="btn btn-alt hidden" id="returnLobbyBtn" style="margin-top:40px;" onclick="window.triggerReturnLobby()">Return to Lobby (Host)</button>
-        <p id="waitingHostText" class="hidden" style="color:#8e8e93; margin-top:30px;">Waiting for host to return to lobby...</p>
+        <h3>Sim Log Terminal:</h3>
+        <div id="gameLog"></div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>

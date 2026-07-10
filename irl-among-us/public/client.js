@@ -1,580 +1,254 @@
-const socket = io({ transports: ['websocket', 'polling'] });
+const socket = io();
 
-let currentRoom = '';
-let myRole = '';
-let gamePlayers = [];
-let cooldownTimer = null;
-let taskTimer = null;
-let meetingTimerInterval = null;
-let canAct = true;
-let canTask = true;
-let amIHost = false;
-let meetingPhase = 'gather';
-let selectedVoteTarget = null;
-let privacyOpen = false;
+let currentRoomCode = null;
+let localPlayer = { id: null, username: '', role: 'crewmate', status: 'alive' };
+let currentGameState = 'lobby'; 
 
-let sheriffCooldownLeft = 0; 
-let sheriffTimerInterval = null;
+// DOM Elements
+const authScreen = document.getElementById('authScreen');
+const lobbyScreen = document.getElementById('lobbyScreen');
+const gameScreen = document.getElementById('gameScreen');
+const usernameInput = document.getElementById('usernameInput');
+const roomCodeInput = document.getElementById('roomCodeInput');
+const playerList = document.getElementById('playerList');
+const gamePlayers = document.getElementById('gamePlayers');
+const roleDisplay = document.getElementById('roleDisplay');
+const gameLog = document.getElementById('gameLog');
 
-if (!sessionStorage.getItem('irl_user_uuid')) {
-    sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
-}
-const myUUID = sessionStorage.getItem('irl_user_uuid');
+// Configuration Elements
+const imposterSelect = document.getElementById('imposterSelect');
+const doctorSelect = document.getElementById('doctorSelect');
+const sheriffSelect = document.getElementById('sheriffSelect');
+const jailorSelect = document.getElementById('jailorSelect');
 
-window.addEventListener('DOMContentLoaded', () => {
-    const savedRoom = sessionStorage.getItem('irl_room_code');
-    const savedUser = sessionStorage.getItem('irl_username');
-    if (savedRoom && savedUser) {
-        if(document.getElementById('createUsername')) document.getElementById('createUsername').value = savedUser;
-        if(document.getElementById('joinUsername')) document.getElementById('joinUsername').value = savedUser;
-        if(document.getElementById('joinRoomCode')) document.getElementById('joinRoomCode').value = savedRoom;
-        socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
-    }
-});
-
-// Clears layout states completely between sessions to fix carry-over UI leakage bugs
-function purgeAllRoleUIElements() {
-    myRole = '';
-    canAct = true;
-    canTask = true;
-    selectedVoteTarget = null;
-    sheriffCooldownLeft = 0;
-
-    clearInterval(cooldownTimer);
-    clearInterval(taskTimer);
-    clearInterval(meetingTimerInterval);
-    clearInterval(sheriffTimerInterval);
-
-    // Hide all specialized submenus explicitly
-    document.getElementById('doctorUI').classList.add('hidden');
-    document.getElementById('jailorUI').classList.add('hidden');
-    document.getElementById('jailorExecuteUI').classList.add('hidden');
-    document.getElementById('taskModuleWrapper').classList.add('hidden');
-    
-    // Wipe dynamic HTML wrappers completely cleanly
-    document.getElementById('roleActionsWrapper').innerHTML = '';
-    document.getElementById('docTargetSelect').innerHTML = '';
-    document.getElementById('jailorTargetSelect').innerHTML = '';
-    document.getElementById('timers').innerText = '';
-    document.getElementById('taskCooldownDisplay').innerText = '';
-    document.getElementById('roleDisplay').innerText = '';
-    
-    // Close privacy screen filter
-    privacyOpen = false;
-    document.getElementById('privacyContainer').classList.add('hidden');
-    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
-    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
+// Auth Handlers
+function createRoom() {
+    const username = usernameInput.value.trim() || 'Player';
+    localPlayer.username = username;
+    socket.emit('createRoom', { username, uuid: generateUUID() });
 }
 
-window.switchTab = function(tabName) {
-    document.getElementById('createTab').classList.add('hidden');
-    document.getElementById('joinTab').classList.add('hidden');
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    
-    if (tabName === 'create') {
-        document.getElementById('createTab').classList.remove('hidden');
-        document.querySelectorAll('.tab-btn')[0].classList.add('active');
-    } else {
-        document.getElementById('joinTab').classList.remove('hidden');
-        document.querySelectorAll('.tab-btn')[1].classList.add('active');
-    }
-};
+function joinRoom() {
+    const username = usernameInput.value.trim() || 'Player';
+    const room = roomCodeInput.value.trim();
+    if (!room) return alert('Enter a room code!');
+    localPlayer.username = username;
+    socket.emit('joinLobby', { username, room, uuid: generateUUID() });
+}
 
-window.createRoom = function() {
-    const username = document.getElementById('createUsername').value.trim();
-    if (!username) return alert("Enter a username.");
-    sessionStorage.setItem('irl_username', username);
-    socket.emit('createRoom', { username, uuid: myUUID });
-};
-
-window.joinRoom = function() {
-    const username = document.getElementById('joinUsername').value.trim();
-    currentRoom = document.getElementById('joinRoomCode').value.trim();
-    if (!username || currentRoom.length !== 6) return alert("Invalid credentials.");
-    
-    sessionStorage.setItem('irl_username', username);
-    sessionStorage.setItem('irl_room_code', currentRoom);
-    socket.emit('joinLobby', { username, room: currentRoom, uuid: myUUID });
-};
-
-window.pushRoleConfig = function() {
-    if (!amIHost) return;
+function sendConfigUpdate() {
+    if (!currentRoomCode) return;
     const config = {
-        imposters: document.getElementById('cfgImposters').value,
-        doctors: document.getElementById('cfgDoctors').value,
-        sheriffs: document.getElementById('cfgSheriffs').value,
-        jailors: document.getElementById('cfgJailors').value
+        imposters: imposterSelect.value,
+        doctors: doctorSelect.value,
+        sheriffs: sheriffSelect.value,
+        jailors: jailorSelect.value
     };
-    socket.emit('updateRoleConfig', { room: currentRoom, config });
-};
+    socket.emit('updateRoleConfig', { room: currentRoomCode, config });
+}
 
-window.startGame = function() { socket.emit('startGame', currentRoom); };
-window.reportBody = function() { socket.emit('reportBody', currentRoom); };
-window.callMeeting = function() { socket.emit('callMeeting', currentRoom); };
-window.startMeeting = function() { 
-    socket.emit('startMeeting', currentRoom); 
-    document.getElementById('hostMeetingBtn').classList.add('hidden'); 
-};
+function startGame() {
+    if (!currentRoomCode) return;
+    socket.emit('startGame', currentRoomCode);
+}
 
-window.togglePrivacy = function() {
-    privacyOpen = !privacyOpen;
-    const container = document.getElementById('privacyContainer');
-    const btn = document.getElementById('togglePrivacyBtn');
-    if (privacyOpen) {
-        container.classList.remove('hidden');
-        btn.innerText = "🔒 Hide Privacy Screen";
-        btn.style.background = "#ff453a";
-    } else {
-        container.classList.add('hidden');
-        btn.innerText = "👀 Reveal Privacy Screen";
-        btn.style.background = "#0a84ff";
-    }
-};
+function logTask() {
+    if (!currentRoomCode) return;
+    socket.emit('logTask', currentRoomCode);
+}
 
-window.triggerReturnLobby = function() {
-    if (amIHost) socket.emit('returnToLobby', currentRoom);
-};
+function callMeeting() {
+    if (!currentRoomCode) return;
+    socket.emit('callMeeting', currentRoomCode);
+}
 
-window.submitTaskDone = function() {
-    if (!canTask) return;
-    socket.emit('logTask', currentRoom);
-    
-    canTask = false;
-    let left = 30;
-    const taskBtn = document.getElementById('taskBtn');
-    const cooldownText = document.getElementById('taskCooldownDisplay');
-    
-    taskBtn.classList.add('btn-disabled');
-    cooldownText.innerText = `Task Log Cooldown: ${left}s`;
-    
-    clearInterval(taskTimer);
-    taskTimer = setInterval(() => {
-        left--;
-        cooldownText.innerText = `Task Log Cooldown: ${left}s`;
-        if (left <= 0) {
-            clearInterval(taskTimer);
-            canTask = true;
-            cooldownText.innerText = '';
-            const me = gamePlayers.find(p => p.id === socket.id);
-            if (me && me.status === 'alive') taskBtn.classList.remove('btn-disabled');
-        }
-    }, 1000);
-};
+function reportBody() {
+    if (!currentRoomCode) return;
+    socket.emit('reportBody', currentRoomCode);
+}
 
-socket.on('joinError', (err) => {
-    sessionStorage.clear();
-    alert(err);
+function hostStartMeeting() {
+    if (!currentRoomCode) return;
+    socket.emit('startMeeting', currentRoomCode);
+}
+
+function castVote(targetId) {
+    if (!currentRoomCode) return;
+    socket.emit('submitVote', { room: currentRoomCode, targetId });
+}
+
+function executeKill(targetId) {
+    if (!currentRoomCode) return;
+    socket.emit('actionKill', { room: currentRoomCode, targetId });
+}
+
+function executeSheriffKill(targetId) {
+    if (!currentRoomCode) return;
+    socket.emit('actionSheriffKill', { room: currentRoomCode, targetId });
+}
+
+function jailPlayer(targetId) {
+    if (!currentRoomCode) return;
+    socket.emit('actionJail', { room: currentRoomCode, targetId });
+}
+
+function executeJailedPlayer() {
+    if (!currentRoomCode) return;
+    socket.emit('actionJailorExecute', { room: currentRoomCode });
+}
+
+// Socket Listeners
+socket.on('connect', () => {
+    localPlayer.id = socket.id;
 });
 
 socket.on('roomCreated', (data) => {
-    currentRoom = data.room;
-    sessionStorage.setItem('irl_room_code', currentRoom);
-});
-
-socket.on('roleConfigUpdated', (config) => {
-    if (!amIHost) {
-        document.getElementById('cfgImposters').value = config.imposters;
-        document.getElementById('cfgDoctors').value = config.doctors;
-        document.getElementById('cfgSheriffs').value = config.sheriffs;
-        document.getElementById('cfgJailors').value = config.jailors;
-    }
+    currentRoomCode = data.room;
+    showScreen(lobbyScreen);
+    document.getElementById('roomDisplay').innerText = `Room: ${currentRoomCode}`;
 });
 
 socket.on('updateLobby', (data) => {
-    // Purge elements directly when updating the setup phase layout
-    purgeAllRoleUIElements();
-
-    document.getElementById('loginScreen').classList.add('hidden');
-    document.getElementById('lobbyScreen').classList.remove('hidden');
-    document.getElementById('gameScreen').classList.add('hidden');
-    document.getElementById('meetingScreen').classList.add('hidden');
-    document.getElementById('gameOverScreen').classList.add('hidden');
+    currentRoomCode = data.roomCode;
+    currentGameState = 'lobby';
+    showScreen(lobbyScreen);
+    document.body.style.border = "none"; 
     
-    currentRoom = data.roomCode;
-    document.getElementById('lobbyRoomCodeDisplay').innerText = data.roomCode;
+    document.getElementById('roomDisplay').innerText = `Room: ${currentRoomCode}`;
+    playerList.innerHTML = data.players.map(p => `<li>${p.username} ${p.id === data.hostId ? '⭐' : ''}</li>`).join('');
     
-    amIHost = (socket.id === data.hostId);
-    if (amIHost) {
-        document.getElementById('startBtn').classList.remove('hidden');
-        document.querySelectorAll('#hostSettingsPanel select').forEach(s => s.disabled = false);
-    } else {
-        document.getElementById('startBtn').classList.add('hidden');
-        document.querySelectorAll('#hostSettingsPanel select').forEach(s => s.disabled = true);
+    const isHost = socket.id === data.hostId;
+    document.getElementById('hostControls').style.display = isHost ? 'block' : 'none';
+    
+    if (data.config) {
+        imposterSelect.value = data.config.imposters;
+        doctorSelect.value = data.config.doctors;
+        sheriffSelect.value = data.config.sheriffs;
+        jailorSelect.value = data.config.jailors;
     }
-    
-    const list = document.getElementById('playerList');
-    list.innerHTML = '';
-    data.players.forEach(p => {
-        let div = document.createElement('div');
-        div.className = 'player-card';
-        div.innerText = `${p.username} ${p.id === data.hostId ? '👑' : ''}`;
-        list.appendChild(div);
-    });
 });
 
+socket.on('roleConfigUpdated', (config) => {
+    imposterSelect.value = config.imposters;
+    doctorSelect.value = config.doctors;
+    sheriffSelect.value = config.sheriffs;
+    jailorSelect.value = config.jailors;
+});
+
+socket.on('joinError', (msg) => alert(msg));
+
 socket.on('gameStarted', (data) => {
-    // Structural purge to guarantee a clean starting canvas
-    purgeAllRoleUIElements();
+    currentGameState = 'running';
+    showScreen(gameScreen);
+    localPlayer.role = data.role;
+    roleDisplay.innerText = `Your Role: ${data.role.toUpperCase()}`;
+    gameLog.innerHTML = `<p>Game started! Task requirement calculated.</p>`;
+});
 
-    myRole = data.role;
-    gamePlayers = data.players;
-    
-    document.getElementById('lobbyScreen').classList.add('hidden');
-    document.getElementById('gameScreen').classList.remove('hidden');
-    
-    const roleEl = document.getElementById('roleDisplay');
-    roleEl.innerText = "Role: " + myRole.toUpperCase();
-    roleEl.style.color = (myRole === 'imposter') ? '#ff453a' : '#30d158';
-    
-    if (myRole === 'imposter') {
-        document.getElementById('taskModuleWrapper').classList.add('hidden');
-    } else {
-        document.getElementById('taskModuleWrapper').classList.remove('hidden');
-        document.getElementById('taskBtn').classList.remove('btn-disabled');
-    }
+socket.on('updateGame', (players) => {
+    const me = players.find(p => p.id === socket.id);
+    if (me) localPlayer.status = me.status;
 
-    if (myRole === 'sheriff') {
-        sheriffCooldownLeft = 30;
-        startSheriffCooldownLoop();
-    } else {
-        startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+    gamePlayers.innerHTML = '';
+    players.forEach(p => {
+        const item = document.createElement('div');
+        item.className = `player-item ${p.status}`;
+        item.innerHTML = `<span>${p.username} (${p.status})</span>`;
+        
+        // Render Contextual Action Buttons
+        if (p.id !== socket.id && p.status === 'alive') {
+            if (currentGameState === 'running') {
+                if (localPlayer.role === 'imposter') {
+                    item.innerHTML += `<button onclick="executeKill('${p.id}')" class="btn-kill">Kill</button>`;
+                }
+                if (localPlayer.role === 'sheriff') {
+                    item.innerHTML += `<button onclick="executeSheriffKill('${p.id}')" class="btn-sheriff">Execute</button>`;
+                }
+                if (localPlayer.role === 'jailor') {
+                    item.innerHTML += `<button onclick="jailPlayer('${p.id}')" class="btn-jail">Jail</button>`;
+                }
+            }
+            if (currentGameState === 'meeting_discuss' && localPlayer.status === 'alive') {
+                item.innerHTML += `<button onclick="castVote('${p.id}')" class="btn-vote">Vote</button>`;
+            }
+        }
+        gamePlayers.appendChild(item);
+    });
+
+    // Add standalone Execution Option for Jailor during active meetings
+    const existingExecBtn = document.getElementById('jailorExecBtn');
+    if (existingExecBtn) existingExecBtn.remove();
+
+    if (currentGameState === 'meeting_discuss' && localPlayer.role === 'jailor' && localPlayer.status === 'alive') {
+        const execBtn = document.createElement('button');
+        execBtn.id = 'jailorExecBtn';
+        execBtn.className = 'btn-execute';
+        execBtn.innerText = 'Execute Jailed Target';
+        execBtn.onclick = executeJailedPlayer;
+        document.getElementById('meetingControls').appendChild(execBtn);
     }
 });
 
 socket.on('tasksUpdated', (data) => {
-    const percentage = (data.completed / data.required) * 100;
-    const bar = document.getElementById('taskBarFill');
-    if(bar) bar.style.width = `${percentage}%`;
-    const txt = document.getElementById('taskBarText');
-    if(txt) txt.innerText = `Tasks: ${data.completed} / ${data.required}`;
+    document.getElementById('taskProgress').innerText = `Tasks completed: ${data.completed} / ${data.required}`;
 });
 
-function startLocalCooldown(seconds) {
-    if (myRole === 'sheriff') return; 
-    if (seconds <= 0) {
-        canAct = true;
-        document.getElementById('timers').innerText = '';
-        renderActionPanel();
-        return;
-    }
-    canAct = false;
-    renderActionPanel();
-    let left = seconds;
-    document.getElementById('timers').innerText = `COOLDOWN: ${left}s`;
-    
-    clearInterval(cooldownTimer);
-    cooldownTimer = setInterval(() => {
-        left--;
-        document.getElementById('timers').innerText = `COOLDOWN: ${left}s`;
-        if (left <= 0) {
-            clearInterval(cooldownTimer);
-            canAct = true;
-            document.getElementById('timers').innerText = '';
-            renderActionPanel();
-        }
-    }, 1000);
-}
-
-function startSheriffCooldownLoop() {
-    if (myRole !== 'sheriff') return;
-    
-    if (sheriffCooldownLeft <= 0) {
-        canAct = true;
-        document.getElementById('timers').innerText = '';
-        renderActionPanel();
-        return;
-    }
-    
-    canAct = false;
-    renderActionPanel();
-    document.getElementById('timers').innerText = `SHERIFF COOLDOWN: ${sheriffCooldownLeft}s`;
-    
-    clearInterval(sheriffTimerInterval);
-    sheriffTimerInterval = setInterval(() => {
-        sheriffCooldownLeft--;
-        document.getElementById('timers').innerText = `SHERIFF COOLDOWN: ${sheriffCooldownLeft}s`;
-        
-        if (sheriffCooldownLeft <= 0) {
-            clearInterval(sheriffTimerInterval);
-            canAct = true;
-            document.getElementById('timers').innerText = '';
-            renderActionPanel();
-        }
-    }, 1000);
-}
-
-function renderActionPanel() {
-    const outerManifestList = document.getElementById('playersActionList');
-    outerManifestList.innerHTML = '';
-    
-    const innerActionWrapper = document.getElementById('roleActionsWrapper');
-    innerActionWrapper.innerHTML = '';
-    
-    const me = gamePlayers.find(p => p.id === socket.id);
-    if (!me) return;
-    
-    document.getElementById('meetCount').innerText = me.meetingsLeft;
-
-    if (me.status === 'dead') {
-        outerManifestList.innerHTML = '<div style="color:#ff453a; font-weight:bold;">YOU ARE DEAD (GHOST MODE)</div>';
-        document.getElementById('taskModuleWrapper').classList.add('hidden');
-        document.getElementById('reportBtn').classList.add('hidden');
-        document.getElementById('emergencyBtn').classList.add('hidden');
-        document.getElementById('doctorUI').classList.add('hidden');
-        document.getElementById('jailorUI').classList.add('hidden');
-        return;
-    }
-
-    if (myRole === 'doctor') {
-        document.getElementById('doctorUI').classList.remove('hidden');
-        const select = document.getElementById('docTargetSelect');
-        select.innerHTML = '<option value="">-- Choose Patient --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
-    } else if (myRole === 'jailor') {
-        document.getElementById('jailorUI').classList.remove('hidden');
-        const select = document.getElementById('jailorTargetSelect');
-        select.innerHTML = '<option value="">-- Choose Suspect --</option>';
-        gamePlayers.forEach(p => { if(p.id !== socket.id && p.status === 'alive') select.innerHTML += `<option value="${p.id}">${p.username}</option>`; });
-    }
-
-    gamePlayers.forEach(p => {
-        let card = document.createElement('div');
-        card.className = 'player-card';
-        card.innerHTML = `<span>${p.username}</span><span style="color:${p.status==='alive'?'#30d158':'#ff453a'};">${p.status.toUpperCase()}</span>`;
-        outerManifestList.appendChild(card);
-
-        if (p.id !== socket.id && p.status === 'alive' && canAct) {
-            if (myRole === 'imposter') {
-                let btn = document.createElement('button');
-                btn.className = 'btn btn-kill';
-                btn.innerText = `Kill ${p.username}`;
-                btn.onclick = () => { socket.emit('actionKill', { room: currentRoom, targetId: p.id }); startLocalCooldown(90); };
-                innerActionWrapper.appendChild(btn);
-            } else if (myRole === 'sheriff') {
-                let btn = document.createElement('button');
-                btn.className = 'btn btn-kill';
-                btn.style.background = "#0a84ff";
-                btn.innerText = `Execute ${p.username}`;
-                btn.onclick = () => { 
-                    socket.emit('actionSheriffKill', { room: currentRoom, targetId: p.id }); 
-                    sheriffCooldownLeft = 30; 
-                    startSheriffCooldownLoop(); 
-                };
-                innerActionWrapper.appendChild(btn);
-            }
-        }
-    });
-}
-
-window.executeDoctorShield = function() {
-    const val = document.getElementById('docTargetSelect').value;
-    if(val) socket.emit('actionShield', { room: currentRoom, targetId: val });
-};
-
-window.executeJailorDetain = function() {
-    if(!canAct) return alert("Jailing ability is on cooldown!");
-    const val = document.getElementById('jailorTargetSelect').value;
-    if(val) { socket.emit('actionJail', { room: currentRoom, targetId: val }); startLocalCooldown(20); }
-};
-
-window.executeJailedSuspect = function() {
-    const val = document.getElementById('jailorTargetSelect').value;
-    if(val) socket.emit('actionExecute', { room: currentRoom, targetId: val });
-};
-
-socket.on('updateGame', (players) => { gamePlayers = players; renderActionPanel(); });
-
 socket.on('meetingCalled', (data) => {
-    meetingPhase = 'gather';
-    selectedVoteTarget = null; 
-    clearInterval(cooldownTimer);
-    clearInterval(meetingTimerInterval);
-    clearInterval(sheriffTimerInterval);
-
-    privacyOpen = false;
-    document.getElementById('privacyContainer').classList.add('hidden');
-    document.getElementById('togglePrivacyBtn').innerText = "👀 Reveal Privacy Screen";
-    document.getElementById('togglePrivacyBtn').style.background = "#0a84ff";
-
-    document.getElementById('gameScreen').classList.add('hidden');
-    document.getElementById('meetingScreen').classList.remove('hidden');
-    
-    document.getElementById('votingUI').classList.add('hidden');
-    document.getElementById('jailorExecuteUI').classList.add('hidden');
-    document.getElementById('gatherPrompt').classList.remove('hidden'); 
-    document.getElementById('meetingTimer').innerText = '--';
-    
-    if (data && data.type) {
-        const callerName = gamePlayers.find(p => p.id === data.caller)?.username || "System Call";
-        document.getElementById('meetingStatus').innerText = `${data.type} initiated by ${callerName}. Gather at location!`;
-    }
-    
-    if (amIHost) document.getElementById('hostMeetingBtn').classList.remove('hidden');
+    currentGameState = 'meeting_gather';
+    document.getElementById('meetingControls').style.display = 'block';
+    gameLog.innerHTML += `<p style="color: #e53e3e; font-weight:bold;">${data.type} called!</p>`;
 });
 
 socket.on('meetingStarted', (data) => {
-    meetingPhase = 'discuss';
-    document.getElementById('gatherPrompt').classList.add('hidden'); 
-    document.getElementById('meetingStatus').innerText = `PHASE: DISCUSSION / VOTING`;
-    
-    document.getElementById('votingUI').classList.remove('hidden'); 
-    renderVotingPanel();
-
-    let left = data.duration;
-    clearInterval(meetingTimerInterval);
-    document.getElementById('meetingTimer').innerText = `${left}s`;
-    
-    meetingTimerInterval = setInterval(() => {
-        left--;
-        document.getElementById('meetingTimer').innerText = `${left}s`;
-        if(left <= 0) clearInterval(meetingTimerInterval);
-    }, 1000);
+    currentGameState = 'meeting_discuss';
+    gameLog.innerHTML += `<p>Discussion started! ${data.duration} seconds remaining.</p>`;
+    // Force rebuild layout to show voting/execution buttons
+    socket.emit('submitVote', { room: currentRoomCode, targetId: null }); 
 });
-
-function renderVotingPanel() {
-    const container = document.getElementById('voteList');
-    container.innerHTML = '';
-    
-    if(meetingPhase !== 'discuss') return;
-
-    const me = gamePlayers.find(p => p.id === socket.id);
-    if (me && me.status === 'dead') {
-        container.innerHTML = '<h4 style="color:#ff453a;">Ghosts cannot vote.</h4>';
-        document.getElementById('skipVoteBtn').className = 'hidden';
-        return;
-    }
-    
-    const skipBtn = document.getElementById('skipVoteBtn');
-    skipBtn.className = 'btn btn-alt';
-    skipBtn.innerHTML = 'Skip Registration';
-    skipBtn.onclick = () => window.selectVoteTarget('skip', skipBtn);
-
-    gamePlayers.forEach(p => {
-        if (p.status === 'alive') {
-            let rowDiv = document.createElement('div');
-            rowDiv.style.display = 'flex';
-            rowDiv.style.alignItems = 'center';
-            rowDiv.style.margin = '5px 0';
-            rowDiv.id = `vote-row-${p.id}`;
-
-            let btn = document.createElement('button');
-            btn.className = 'btn btn-alt';
-            btn.style.margin = '0';
-            btn.style.flex = '1';
-            btn.id = `vote-btn-${p.id}`;
-            btn.innerText = p.username;
-            btn.onclick = () => window.selectVoteTarget(p.id, rowDiv);
-            
-            rowDiv.appendChild(btn);
-            container.appendChild(rowDiv);
-        }
-    });
-}
-
-window.selectVoteTarget = function(targetId, elementContainer) {
-    const oldTick = document.getElementById('voteConfirmTick');
-    if (oldTick) oldTick.remove();
-
-    selectedVoteTarget = targetId;
-
-    let confirmBtn = document.createElement('button');
-    confirmBtn.id = 'voteConfirmTick';
-    confirmBtn.className = 'btn btn-confirm';
-    confirmBtn.innerText = '✓';
-    confirmBtn.onclick = (e) => {
-        e.stopPropagation();
-        window.confirmAndSubmitVote();
-    };
-
-    elementContainer.appendChild(confirmBtn);
-};
-
-window.confirmAndSubmitVote = function() {
-    if (!selectedVoteTarget) return;
-    socket.emit('submitVote', { room: currentRoom, targetId: selectedVoteTarget });
-    
-    document.getElementById('skipVoteBtn').className = 'hidden';
-    const oldTick = document.getElementById('voteConfirmTick');
-    if (oldTick) oldTick.remove();
-    
-    document.querySelectorAll('#voteList button').forEach(btn => {
-        if(btn.id !== 'voteConfirmTick') {
-            btn.disabled = true;
-            btn.onclick = null;
-        }
-    });
-
-    if (!document.getElementById('voteStatusNotice')) {
-        let notice = document.createElement('h4');
-        notice.id = 'voteStatusNotice';
-        notice.innerText = 'Vote Logged. Waiting for other crew responses...';
-        document.getElementById('votingUI').appendChild(notice);
-    }
-};
 
 socket.on('voteCastFeedback', (data) => {
-    const targetRow = document.getElementById(`vote-row-${data.voterId}`);
-    if (targetRow && !document.getElementById(`checkmark-${data.voterId}`)) {
-        let check = document.createElement('span');
-        check.id = `checkmark-${data.voterId}`;
-        check.innerText = ' ✅';
-        check.style.marginLeft = '10px';
-        check.style.fontSize = '20px';
-        targetRow.appendChild(check);
-    }
+    console.log(`Vote registered from user: ${data.voterId}`);
 });
 
-socket.on('playerEjected', (result) => {
-    document.getElementById('meetingStatus').innerText = `Assembly Result: ${result} was exiled.`;
+socket.on('playerEjected', (msg) => {
+    gameLog.innerHTML += `<p style="color: #f6ad55; font-weight:bold;">Ejection Result: ${msg}</p>`;
 });
 
-socket.on('meetingEnded', (players) => {
-    gamePlayers = players;
-    selectedVoteTarget = null;
-    clearInterval(meetingTimerInterval);
-    document.getElementById('meetingScreen').classList.add('hidden');
-    document.getElementById('gameScreen').classList.remove('hidden');
-    
-    const notice = document.getElementById('voteStatusNotice');
-    if (notice) notice.remove();
+socket.on('meetingEnded', () => {
+    currentGameState = 'running';
+    document.getElementById('meetingControls').style.display = 'none';
+    const existingExecBtn = document.getElementById('jailorExecBtn');
+    if (existingExecBtn) existingExecBtn.remove();
+    gameLog.innerHTML += `<p>Returning to roaming loop phase...</p>`;
+});
 
-    const me = gamePlayers.find(p => p.id === socket.id);
-    if (me && me.status === 'alive') {
-        document.getElementById('reportBtn').classList.remove('hidden');
-        document.getElementById('emergencyBtn').classList.remove('hidden');
-    }
-
-    if (myRole === 'sheriff') {
-        startSheriffCooldownLoop();
+socket.on('playerJailed', (data) => {
+    alert(data.message);
+    if (data.message.includes('executed')) {
+        document.body.style.border = "5px solid #e53e3e";
     } else {
-        startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+        document.body.style.border = "5px solid #4a5568";
     }
+});
+
+socket.on('actionFeedback', (data) => {
+    gameLog.innerHTML += `<p style="color: #4ecca3;">${data.message}</p>`;
 });
 
 socket.on('gameOverState', (data) => {
-    clearInterval(cooldownTimer);
-    clearInterval(taskTimer);
-    clearInterval(meetingTimerInterval);
-    clearInterval(sheriffTimerInterval);
-    
-    document.getElementById('loginScreen').classList.add('hidden');
-    document.getElementById('lobbyScreen').classList.add('hidden');
-    document.getElementById('gameScreen').classList.add('hidden');
-    document.getElementById('meetingScreen').classList.add('hidden');
-    
-    const goScreen = document.getElementById('gameOverScreen');
-    const winHeader = document.getElementById('winHeader');
-    
-    goScreen.classList.remove('hidden');
-    winHeader.innerText = `${data.winner.split(' ')[0]} Victory!`.toUpperCase();
-    winHeader.style.color = data.winner.toLowerCase().includes('imposter') ? '#ff453a' : '#30d158';
-    document.getElementById('winDetails').innerText = data.winner;
-    
-    if (amIHost) {
-        document.getElementById('returnLobbyBtn').classList.remove('hidden');
-        document.getElementById('waitingHostText').classList.add('hidden');
-    } else {
-        document.getElementById('returnLobbyBtn').classList.add('hidden');
-        document.getElementById('waitingHostText').classList.remove('hidden');
-    }
+    currentGameState = 'game_over';
+    alert(`Game Over! Winners: ${data.winner}`);
+    location.reload();
 });
+
+// Helper Layout functions
+function showScreen(screen) {
+    authScreen.style.display = 'none';
+    lobbyScreen.style.display = 'none';
+    gameScreen.style.display = 'none';
+    screen.style.display = 'block';
+}
+
+function generateUUID() {
+    return 'id-' + Math.random().toString(36).substr(2, 9);
+}
