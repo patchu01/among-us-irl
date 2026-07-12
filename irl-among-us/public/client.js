@@ -267,7 +267,7 @@ socket.on('gameStarted', (data) => {
         sheriffCooldownLeft = 0;
         startSheriffCooldownLoop();
     } else {
-        startLocalCooldown((myRole === 'imposter') ? 90 : 0);
+        startLocalCooldown((myRole === 'imposter') ? 1 : 0);
     }
 });
 
@@ -427,7 +427,7 @@ function renderActionPanel() {
                     let btn = document.createElement('button');
                     btn.className = 'btn btn-kill';
                     btn.innerText = `Kill ${p.username}`;
-                    btn.onclick = () => { socket.emit('actionKill', { room: currentRoom, targetId: p.id }); startLocalCooldown(90); };
+                    btn.onclick = () => { socket.emit('actionKill', { room: currentRoom, targetId: p.id }); startLocalCooldown(1); };
                     innerActionWrapper.appendChild(btn);
                 }
             } else if (myRole === 'sheriff') {
