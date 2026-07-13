@@ -18,10 +18,15 @@ io.on('connection', (socket) => {
         const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
         rooms[roomCode] = {
             hostId: socket.id,
+            hostUuid: data.uuid,
             players: [],
             state: 'lobby',
             votes: {},
             timer: null,
+            cooldownInterval: null,
+            meetingTimerLeft: 0,
+            winner: null,
+            killCooldown: 90,
             tasksCompleted: 0,
             tasksRequired: 0,
             tasksPerPlayer: 3,
@@ -41,6 +46,53 @@ io.on('connection', (socket) => {
         joinPlayerToRoom(socket, data.username, data.uuid, data.room);
     });
 
+    socket.on('registerSession', (data) => {
+        const room = rooms[data.room];
+        if (!room) return;
+
+        const player = room.players.find((p) => p.uuid === data.uuid);
+        if (!player) return;
+
+        player.id = socket.id;
+        player.username = data.username || player.username;
+        player.disconnected = false;
+        socket.join(data.room);
+
+        if (room.hostUuid === data.uuid) {
+            room.hostId = socket.id;
+        }
+
+        if (room.state === 'lobby' || room.state === 'game_over') {
+            socket.emit('updateLobby', { roomCode: data.room, hostId: room.hostId, players: room.players, config: { ...room.roleConfig, killCooldown: room.killCooldown } });
+            io.to(data.room).emit('updateLobby', { roomCode: data.room, hostId: room.hostId, players: room.players, config: { ...room.roleConfig, killCooldown: room.killCooldown } });
+            if (room.state === 'game_over') {
+                socket.emit('gameOverState', { winner: room.winner });
+            }
+            return;
+        }
+
+        socket.emit('gameStarted', {
+            roomCode: data.room,
+            role: player.role,
+            players: room.players,
+            tasksRequired: player.tasksRequired,
+            killCooldownSetting: room.killCooldown,
+            killCooldownLeft: Math.max(0, Math.ceil(((player.nextKillAt || 0) - Date.now()) / 1000))
+        });
+
+        io.to(data.room).emit('updateGame', room.players);
+        emitKillCooldownTick(data.room);
+
+        if (room.state === 'meeting_gather') {
+            socket.emit('meetingCalled', { type: 'Reconnected', caller: null });
+        }
+
+        if (room.state === 'meeting_discuss') {
+            socket.emit('meetingCalled', { type: 'Reconnected', caller: null });
+            socket.emit('meetingStarted', { phase: 'discussion', duration: room.meetingTimerLeft || 60 });
+        }
+    });
+
     socket.on('updateRoleConfig', (data) => {
         const room = rooms[data.room];
         if (!room || room.hostId !== socket.id || room.state !== 'lobby') return;
@@ -52,8 +104,9 @@ io.on('connection', (socket) => {
             jailors: Math.min(parseInt(data.config.jailors) || 0, 1),
             jesters: Math.min(parseInt(data.config.jesters) || 0, 1)
         };
+        room.killCooldown = Math.min(Math.max(parseInt(data.config.killCooldown) || 90, 10), 120);
         
-        io.to(data.room).emit('roleConfigUpdated', room.roleConfig);
+        io.to(data.room).emit('roleConfigUpdated', { ...room.roleConfig, killCooldown: room.killCooldown });
     });
 
     socket.on('startGame', (roomCode) => {
@@ -62,6 +115,7 @@ io.on('connection', (socket) => {
 
         room.state = 'running';
         room.tasksCompleted = 0;
+        room.meetingTimerLeft = 0;
         const players = room.players;
         
         // FIX: Prioritize imposters first, then fill optional roles, strictly enforcing counts
@@ -101,8 +155,12 @@ io.on('connection', (socket) => {
             p.shieldUsed = false;
             p.tasksCompleted = 0;
             p.tasksRequired = (p.role === 'imposter' || p.role === 'jester') ? 0 : room.tasksPerPlayer;
-            io.to(p.id).emit('gameStarted', { role: p.role, players, tasksRequired: p.tasksRequired });
+            p.nextKillAt = (p.role === 'imposter') ? Date.now() + room.killCooldown * 1000 : 0;
+            io.to(p.id).emit('gameStarted', { role: p.role, players, tasksRequired: p.tasksRequired, killCooldownSetting: room.killCooldown, killCooldownLeft: (p.role === 'imposter') ? room.killCooldown : 0 });
         });
+
+        startRoomCooldownTicker(roomCode);
+        emitKillCooldownTick(roomCode);
 
         io.to(roomCode).emit('updateGame', players);
         io.to(roomCode).emit('tasksUpdated', { players: room.players });
@@ -160,11 +218,13 @@ io.on('connection', (socket) => {
         room.votes = {};
         
         let duration = 60;
+        room.meetingTimerLeft = duration;
         io.to(roomCode).emit('meetingStarted', { phase: 'discussion', duration });
 
         clearInterval(room.timer);
         room.timer = setInterval(() => {
             duration--;
+            room.meetingTimerLeft = duration;
             if (duration <= 0) {
                 clearInterval(room.timer);
                 evaluateVotes(roomCode);
@@ -200,6 +260,11 @@ io.on('connection', (socket) => {
             if (killer.role === 'imposter' && target.role === 'imposter') {
                 return;
             }
+            if (killer.role === 'imposter') {
+                const now = Date.now();
+                if (now < (killer.nextKillAt || 0)) return;
+                killer.nextKillAt = now + room.killCooldown * 1000;
+            }
             if (target.shieldedBy) {
                 const shieldOwner = room.players.find(p => p.id === target.shieldedBy);
                 target.shieldedBy = null;
@@ -207,11 +272,13 @@ io.on('connection', (socket) => {
                 [shieldOwner?.id, target.id, killer.id].filter(Boolean).forEach(id => {
                     io.to(id).emit('shieldBlocked', { targetName: target.username, targetId: target.id, isTarget: id === target.id });
                 });
+                emitKillCooldownTick(data.room);
                 io.to(data.room).emit('updateGame', room.players);
                 return;
             }
             target.status = 'dead';
             target.tasksCompleted = target.tasksRequired;
+            emitKillCooldownTick(data.room);
             io.to(data.room).emit('updateGame', room.players);
             checkWinConditions(data.room);
         }
@@ -324,37 +391,93 @@ io.on('connection', (socket) => {
         if (!room || room.hostId !== socket.id) return;
         
         room.state = 'lobby';
-        room.players.forEach(p => { p.status = 'alive'; p.role = 'crewmate'; p.jailedBy = null; p.jailorUses = 0; p.shieldedBy = null; p.shieldUsed = false; });
-        io.to(roomCode).emit('updateLobby', { roomCode, hostId: room.hostId, players: room.players, config: room.roleConfig });
+        room.winner = null;
+        room.meetingTimerLeft = 0;
+        stopRoomCooldownTicker(roomCode);
+        room.players.forEach(p => { p.status = 'alive'; p.role = 'crewmate'; p.jailedBy = null; p.jailorUses = 0; p.shieldedBy = null; p.shieldUsed = false; p.nextKillAt = 0; p.disconnected = false; });
+        io.to(roomCode).emit('updateLobby', { roomCode, hostId: room.hostId, players: room.players, config: { ...room.roleConfig, killCooldown: room.killCooldown } });
     });
 
     socket.on('disconnect', () => {
         for (const code in rooms) {
-            rooms[code].players = rooms[code].players.filter(p => p.id !== socket.id);
-            if (rooms[code].players.length === 0) {
-                clearInterval(rooms[code].timer);
-                delete rooms[code];
-            } else {
-                io.to(code).emit('updateLobby', { roomCode: code, hostId: rooms[code].hostId, players: rooms[code].players });
-                checkWinConditions(code);
+            const room = rooms[code];
+            const player = room.players.find(p => p.id === socket.id);
+            if (player) {
+                player.disconnected = true;
             }
+
+            const anyConnected = room.players.some(p => !p.disconnected);
+            if (!anyConnected) {
+                clearInterval(room.timer);
+                stopRoomCooldownTicker(code);
+                delete rooms[code];
+                continue;
+            }
+
+            if (room.state === 'lobby' || room.state === 'game_over') {
+                io.to(code).emit('updateLobby', { roomCode: code, hostId: room.hostId, players: room.players, config: { ...room.roleConfig, killCooldown: room.killCooldown } });
+            } else {
+                io.to(code).emit('updateGame', room.players);
+            }
+
+            checkWinConditions(code);
         }
     });
 });
 
 function joinPlayerToRoom(socket, username, uuid, roomCode) {
     const room = rooms[roomCode];
-    const newPlayer = { id: socket.id, username, uuid, status: 'alive', role: 'crewmate', meetingsLeft: 1 };
-    room.players.push(newPlayer);
+    let player = room.players.find((p) => p.uuid === uuid);
+    if (player) {
+        player.id = socket.id;
+        player.username = username;
+        player.disconnected = false;
+    } else {
+        player = { id: socket.id, username, uuid, status: 'alive', role: 'crewmate', meetingsLeft: 1, disconnected: false };
+        room.players.push(player);
+    }
     socket.join(roomCode);
     
-    io.to(roomCode).emit('updateLobby', { roomCode, hostId: room.hostId, players: room.players, config: room.roleConfig });
+    io.to(roomCode).emit('updateLobby', { roomCode, hostId: room.hostId, players: room.players, config: { ...room.roleConfig, killCooldown: room.killCooldown } });
 }
 
 function triggerAssembly(roomCode, type, callerId) {
     const room = rooms[roomCode];
     room.state = 'meeting_gather';
     io.to(roomCode).emit('meetingCalled', { type, caller: callerId });
+}
+
+function startRoomCooldownTicker(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    stopRoomCooldownTicker(roomCode);
+    room.cooldownInterval = setInterval(() => {
+        emitKillCooldownTick(roomCode);
+        if (!room.players.some(p => p.role === 'imposter' && p.nextKillAt && p.nextKillAt > Date.now())) {
+            stopRoomCooldownTicker(roomCode);
+        }
+    }, 1000);
+}
+
+function stopRoomCooldownTicker(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+    clearInterval(room.cooldownInterval);
+    room.cooldownInterval = null;
+}
+
+function emitKillCooldownTick(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    const payload = room.players.map((p) => ({
+        id: p.id,
+        killCooldownLeft: p.role === 'imposter' ? Math.max(0, Math.ceil(((p.nextKillAt || 0) - Date.now()) / 1000)) : 0,
+        killCooldownSetting: room.killCooldown
+    }));
+
+    io.to(roomCode).emit('killCooldownTick', payload);
 }
 
 function evaluateVotes(roomCode) {

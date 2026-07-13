@@ -20,8 +20,10 @@ let voteTallyAnimationActive = false;
 let voteTallyAnimationTimer = null;
 let meetingEndedPendingPlayers = null;
 
-let sheriffCooldownLeft = 0; 
+let sheriffCooldownLeft = 0;
 let sheriffTimerInterval = null;
+let killCooldownSetting = 90;
+let myKillCooldownLeft = 0;
 
 if (!sessionStorage.getItem('irl_user_uuid')) {
     sessionStorage.setItem('irl_user_uuid', 'user_' + Math.random().toString(36).substring(2, 15));
@@ -35,6 +37,15 @@ window.addEventListener('DOMContentLoaded', () => {
         if(document.getElementById('createUsername')) document.getElementById('createUsername').value = savedUser;
         if(document.getElementById('joinUsername')) document.getElementById('joinUsername').value = savedUser;
         if(document.getElementById('joinRoomCode')) document.getElementById('joinRoomCode').value = savedRoom;
+        socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
+    }
+});
+
+socket.on('connect', () => {
+    const savedRoom = sessionStorage.getItem('irl_room_code');
+    const savedUser = sessionStorage.getItem('irl_username');
+    if (savedRoom && savedUser) {
+        currentRoom = savedRoom;
         socket.emit('registerSession', { username: savedUser, room: savedRoom, uuid: myUUID });
     }
 });
@@ -119,7 +130,8 @@ window.pushRoleConfig = function() {
         doctors: document.getElementById('cfgDoctors').value,
         sheriffs: document.getElementById('cfgSheriffs').value,
         jailors: document.getElementById('cfgJailors').value,
-        jesters: document.getElementById('cfgJesters').value
+        jesters: document.getElementById('cfgJesters').value,
+        killCooldown: document.getElementById('cfgKillCooldown').value
     };
     socket.emit('updateRoleConfig', { room: currentRoom, config });
     
@@ -183,7 +195,6 @@ window.submitTaskDone = function() {
 };
 
 socket.on('joinError', (err) => {
-    sessionStorage.clear();
     alert(err);
 });
 
@@ -199,6 +210,7 @@ socket.on('roleConfigUpdated', (config) => {
         document.getElementById('cfgSheriffs').value = config.sheriffs;
         document.getElementById('cfgJailors').value = config.jailors;
         document.getElementById('cfgJesters').value = config.jesters;
+        document.getElementById('cfgKillCooldown').value = config.killCooldown || 90;
     }
 });
 
@@ -224,12 +236,22 @@ socket.on('updateLobby', (data) => {
         document.querySelectorAll('#hostSettingsPanel select').forEach(s => s.disabled = true);
     }
     
+    document.getElementById('cfgImposters').value = data.config.imposters || 1;
+    document.getElementById('cfgDoctors').value = data.config.doctors || 0;
+    document.getElementById('cfgSheriffs').value = data.config.sheriffs || 0;
+    document.getElementById('cfgJailors').value = data.config.jailors || 0;
+    document.getElementById('cfgJesters').value = data.config.jesters || 0;
+    document.getElementById('cfgTasksPerPlayer').value = data.tasksPerPlayer || 3;
+    if (data.config.killCooldown) {
+        document.getElementById('cfgKillCooldown').value = data.config.killCooldown;
+    }
+    
     const list = document.getElementById('playerList');
     list.innerHTML = '';
     data.players.forEach(p => {
         let div = document.createElement('div');
         div.className = 'player-card';
-        div.innerText = `${p.username} ${p.id === data.hostId ? '👑' : ''}`;
+        div.innerText = `${p.username} ${p.id === data.hostId ? '👑' : ''}${p.disconnected ? ' (away)' : ''}`;
         list.appendChild(div);
     });
 });
@@ -238,11 +260,14 @@ socket.on('gameStarted', (data) => {
     // Structural purge to guarantee a clean starting canvas
     purgeAllRoleUIElements();
 
+    currentRoom = data.roomCode || currentRoom;
     myRole = data.role;
     gamePlayers = data.players;
     myTasksRequired = data.tasksRequired || 0;
     myTasksCompleted = 0;
-    
+    killCooldownSetting = data.killCooldownSetting || 90;
+    myKillCooldownLeft = data.killCooldownLeft || 0;
+
     document.getElementById('lobbyScreen').classList.add('hidden');
     document.getElementById('gameScreen').classList.remove('hidden');
     
@@ -266,9 +291,9 @@ socket.on('gameStarted', (data) => {
     if (myRole === 'sheriff') {
         sheriffCooldownLeft = 0;
         startSheriffCooldownLoop();
-    } else {
-        startLocalCooldown((myRole === 'imposter') ? 1 : 0);
     }
+
+    updateKillCooldownState();
 });
 
 socket.on('tasksUpdated', (data) => {
@@ -289,6 +314,7 @@ socket.on('tasksUpdated', (data) => {
 
 function startLocalCooldown(seconds) {
     if (myRole === 'sheriff') return; 
+    if (myRole === 'imposter') return;
     if (seconds <= 0) {
         canAct = true;
         document.getElementById('timers').innerText = '';
@@ -311,6 +337,19 @@ function startLocalCooldown(seconds) {
             renderActionPanel();
         }
     }, 1000);
+}
+
+function updateKillCooldownState() {
+    if (myRole !== 'imposter') return;
+
+    if (myKillCooldownLeft > 0) {
+        canAct = false;
+        document.getElementById('timers').innerText = `KILL COOLDOWN: ${myKillCooldownLeft}s`;
+    } else {
+        canAct = true;
+        document.getElementById('timers').innerText = '';
+    }
+    renderActionPanel();
 }
 
 function startSheriffCooldownLoop() {
@@ -485,6 +524,14 @@ socket.on('votesReset', () => {
     const oldTick = document.getElementById('voteConfirmTick');
     if (oldTick) oldTick.remove();
     document.querySelectorAll('#voteList .btn-confirm').forEach(b => b.remove());
+});
+
+socket.on('killCooldownTick', (payload) => {
+    const meData = payload.find(p => p.id === socket.id);
+    if (!meData) return;
+    killCooldownSetting = meData.killCooldownSetting || killCooldownSetting;
+    myKillCooldownLeft = meData.killCooldownLeft || 0;
+    updateKillCooldownState();
 });
 
 socket.on('updateGame', (players) => {

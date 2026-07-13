@@ -100,6 +100,14 @@
                     <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
                 </select>
             </div>
+            <div class="role-counter">
+                <span>Imposter Kill CD:</span>
+                <select id="cfgKillCooldown" onchange="window.pushRoleConfig()">
+                    <option value="10">10s</option><option value="20">20s</option><option value="30">30s</option><option value="40">40s</option>
+                    <option value="50">50s</option><option value="60">60s</option><option value="70">70s</option><option value="80">80s</option>
+                    <option value="90" selected>90s</option><option value="100">100s</option><option value="110">110s</option><option value="120">120s</option>
+                </select>
+            </div>
         </div>
 
         <button class="btn hidden" id="startBtn" onclick="window.startGame()">Start Game</button>
